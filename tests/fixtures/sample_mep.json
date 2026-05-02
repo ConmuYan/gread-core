@@ -1,0 +1,19 @@
+{
+  "node_id": "0",
+  "detector_name": "gcn",
+  "calibration": {
+    "prediction_score": 0.75,
+    "uncertainty": 0.3
+  },
+  "reasoning": {
+    "uncertainty_level": "low",
+    "degree_level": "high",
+    "neighbor_consistency": "low",
+    "feature_neighbor_discrepancy": "high",
+    "detector_signal": "embedding_neighbor_discrepancy_high",
+    "detector_signal_strength": "strong",
+    "counter_signal": "benign_neighbor_signal_low",
+    "allowed_support_ids": ["degree_level", "neighbor_consistency", "feature_neighbor_discrepancy", "detector_signal"],
+    "allowed_counter_ids": ["counter_signal"]
+  }
+}

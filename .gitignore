@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing / linting caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Artifacts and generated outputs (large, not source)
+artifacts/
+.cache/
+
+# OMC / agent state (session-specific)
+.omc/
+.agents/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

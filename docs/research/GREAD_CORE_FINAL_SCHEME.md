@@ -1,0 +1,1067 @@
+下面是我基于你原始研究方案、6 个 AI 的 18 条改进意见、以及我自己的 TKDE 视角审稿后，整合出的 **GReaD-Core 终极结晶版研究方案**。
+
+我的总体判断是：**原方案方向是对的，不需要推倒重来；但当前版本确实只能到 borderline / major revision。真正阻碍它冲 TKDE 的不是“模块不够多”，而是 verifier、score leakage、faithfulness、training protocol、cross-detector protocol 这五处尚未闭合。**
+
+原方案的核心骨架是：从图欺诈检测器抽取 Minimal Evidence Package，让 LLM 生成 Evidence Rationale Record，经 hard verifier 接受后，以
+[
+L = L_{\text{sup}} + \lambda a_v (L_{\text{type}} + L_{\text{evidence}})
+]
+蒸馏到两个轻量 head，并保持推理时 LLM-free；你也明确要求主打 minimal、verified、detector-native、LLM-free，而不主打 causal explanation 或 universal any-detector guarantee。这个收缩定位是正确的。 
+
+---
+
+# 一、我的独立评审结论
+
+## 当前版本评分：Borderline，Major Revision
+
+如果我是 TKDE 审稿人，我会给出类似判断：
+
+> **The idea is promising and well-positioned, but the current formulation is not yet sufficiently rigorous to justify the term “evidence-verified reasoning distillation.” The framework needs stronger verification semantics, leakage control, faithfulness-aware architecture, and cross-detector evaluation protocol.**
+
+也就是说，它不是一个坏 idea，而是一个 **好 idea 还没有完全“锁死攻击面”**。
+
+## 核心优点
+
+GReaD-Core 最强的地方有三点。
+
+第一，它没有走“把整张图丢给 LLM”的高风险路线，而是让 LLM 只看 detector-native MEP。这让它天然避开了长 prompt、拓扑幻觉和在线推理成本问题。
+
+第二，它不把 LLM rationale 当真理，而是先经过 hard verifier。这比普通 pseudo-labeling 或 free-form explanation distillation 更稳。
+
+第三，它不依赖在线 LLM，最终模型输出 fraud score、risk type、evidence mask 和 template explanation，具有实际部署价值。
+
+这个定位是有必要的，因为 2025–2026 年相关方向已经非常接近：MLED 已经提出 multi-level LLM enhanced graph fraud detection，用 LLM 提取文本语义并通过 type-level / relation-level enhancer 增强图欺诈检测；FraudCoT 进一步做了 graph-aware CoT distillation 和 LLM–GNN co-training。单纯说“LLM + graph fraud detection”已经不够新。([arXiv][1])
+
+## 核心短板
+
+当前版本最大的问题不是缺功能，而是 **几个关键概念还没有被形式化到足够硬**。
+
+最重要的短板有五个：
+
+1. **hard verifier 目前更像 schema checker，而不是 evidence verifier。**
+   只检查 JSON、risk type、evidence id 和简单 compatibility，不足以保证 ERR 的证据角色、必要条件、禁止条件和训练标签极性一致。
+
+2. **MEP 中的 `prediction_score` 有明显 label leakage 风险。**
+   LLM 看到 `prediction_score=0.83` 后，很可能只是把 base detector 的分数“语言化”。这样 risk type / evidence supervision 可能没有增量信息。
+
+3. **CEC 存在 disconnected rationale 风险。**
+   原方案中 fraud score 来自 base detector，risk/evidence head 只并行输出解释。如果 evidence mask 不参与最终 score 的 readout，那么削弱 evidence 后 fraud score 是否下降，在架构上并不保证。
+
+4. **训练流程存在 chicken-and-egg 问题。**
+   MEP 依赖一个已有判别能力的 detector。如果训练早期就让未收敛 detector 生成 MEP，LLM 会基于噪声证据生成“合规但错误”的 ERR。
+
+5. **detector-adaptable 的主张还不够可验证。**
+   如果只在 BWGNN 上做，审稿人会认为它是 BWGNN explanation plugin，而不是 detector-native evidence interface。
+
+GADBench 的发现尤其提醒我们：supervised graph anomaly detection 中，tree ensembles with simple neighborhood aggregation 有时能超过很多专门设计的 GNN。因此 TKDE 审稿人不会轻易相信“多两个 head + LLM rationale”就是贡献，必须证明 reasoning supervision 提供了 base score 之外的增量信息。([arXiv][2])
+
+---
+
+# 二、18 条改进意见的归并结果
+
+6 个 AI 的 18 条意见虽然表述不同，但本质上可以归成 7 类。
+
+| 高频痛点                  | 对应外部意见                                                                            | 我的处理                                                 |
+| --------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| verifier 太弱           | Evidence Contract Verifier、双层校验、compatibility prior、语义矩阵、自一致性、label compatibility | **采纳为主线核心修改**                                        |
+| prediction_score 泄漏   | score-blind / residual evidence distillation、non-redundancy criterion             | **采纳为主线核心修改**                                        |
+| CEC / faithfulness 断裂 | CER、slot-wise CEC、Concept-Gated Readout、三元 CEC                                    | **采纳，但不主打 causal，只主打 counterfactual responsiveness** |
+| 训练流程不稳定               | two-stage asynchronous distillation、自适应 λ、DHEF                                    | **采纳 two-stage；自适应 λ 放 appendix；DHEF 不做主线**          |
+| 跨 detector 可比性不足      | Detector-Evidence Adapter Protocol、evidence strength slot                         | **采纳为主线核心修改**                                        |
+| trace selection 信息密度  | evidence-conflict bucket、evidence diversity sampling                              | **采纳 diversity 子采样；conflict bucket 放 appendix**      |
+| prompt 质量提升           | risk-type prototype prompt、多次 LLM self-consistency                                | **不做主线，只做可选增强**                                      |
+
+最值得保留的是三条：**Evidence Contract Verifier、score-blind MEP、evidence-conditioned faithful readout + tri-CEC**。上传的 18 条意见中也明确把 Evidence Contract Verifier、score-blind / residual distillation、Detector-Evidence Adapter Protocol 和 CEC 三元评价列为最关键的三类 revision。 
+
+我不建议把所有 18 条都塞进主方法。那会把原方案从“minimal and hard”改成“复杂系统堆叠”，反而损害论文气质。
+
+---
+
+# 三、终极版论文定位
+
+## 新标题建议
+
+**GReaD-Core: Contract-Verified Score-Blind Evidence Distillation for LLM-Free Graph Fraud Reasoning**
+
+中文：
+
+**GReaD-Core：面向无 LLM 推理图欺诈检测的契约校验证据蒸馏框架**
+
+## 最终论文主张
+
+> GReaD-Core converts a trained graph fraud detector into an LLM-free evidence-grounded reasoner by distilling only contract-verified, score-blind, detector-native evidence rationales generated by an LLM teacher.
+
+中文：
+
+> GReaD-Core 将已训练图欺诈检测器转化为无需在线 LLM 的证据化推理器。它让 LLM 只基于 score-blind 的 detector-native evidence 生成结构化 ERR，并且只有通过 Evidence Contract Verifier 的 rationale 才能作为辅助监督进入训练。
+
+## 最终贡献点
+
+只保留 3 个贡献。
+
+**Contribution 1: Score-Blind Detector-Native Evidence Interface**
+
+提出一个 score-blind 的 detector-native evidence interface，将图欺诈检测器的内部信号转化为 LLM 可读、可验证、可跨 detector 适配的 Minimal Evidence Package，同时将 prediction score 从 reasoning evidence 中隔离。
+
+**Contribution 2: Contract-Verified Reasoning Distillation**
+
+提出 Evidence Contract Verifier，使 LLM 生成的 ERR 必须满足 schema validity、evidence availability、role consistency、risk-evidence contract、score-blindness 和 label compatibility 后，才能进入蒸馏。
+
+**Contribution 3: Evidence-Conditioned LLM-Free Reasoner**
+
+提出轻量 evidence-conditioned reasoner，使 student 在无 LLM 推理时同时输出 fraud score、risk type、signed evidence mask 和 template explanation，并通过 tri-CEC 验证解释输出对证据扰动的响应一致性。
+
+---
+
+# 四、终极版方法设计
+
+## 1. Problem Definition
+
+给定图：
+
+[
+G=(V,E,X)
+]
+
+以及训练标签：
+
+[
+y_v \in {0,1}, \quad v \in V_{\text{train}}
+]
+
+基础图欺诈检测器输出：
+
+[
+f_\theta(G,X,v) \rightarrow (p_v, z_v)
+]
+
+其中：
+
+* (p_v)：base fraud score；
+* (z_v)：node representation。
+
+GReaD-Core 不直接让 LLM 读取 (G)、邻居 ID、边 ID 或 k-hop 子图，而是通过 detector adapter 抽取：
+
+[
+A_d(f_\theta, G, X, v) \rightarrow E_v
+]
+
+其中 (E_v) 是 score-blind Minimal Evidence Package。
+
+LLM teacher 生成：
+
+[
+M(P(E_v)) \rightarrow R_v
+]
+
+Verifier 判断：
+
+[
+\text{ECV}(R_v,E_v,y_v) \rightarrow a_v \in {0,1}
+]
+
+只有 (a_v=1) 的 ERR 才用于 reasoning distillation。
+
+---
+
+## 2. Score-Blind Minimal Evidence Package
+
+原方案把 `prediction_score` 放进 MEP。终极版必须改为 **双通道 MEP**。
+
+### 2.1 Calibration Channel
+
+只用于 trace selection、bucket 分层和实验分析，不进入 LLM reasoning prompt：
+
+```json
+{
+  "prediction_score": 0.83,
+  "uncertainty": 0.17
+}
+```
+
+### 2.2 Reasoning Channel
+
+LLM 只能看到 reasoning channel：
+
+```json
+{
+  "uncertainty_level": "low",
+  "degree_level": "high",
+  "neighbor_consistency": "low",
+  "feature_neighbor_discrepancy": "high",
+  "detector_signal": "high_frequency_response_high",
+  "detector_signal_strength": "strong",
+  "counter_signal": "benign_neighbor_signal_medium",
+  "allowed_support_ids": [
+    "degree_level",
+    "neighbor_consistency",
+    "feature_neighbor_discrepancy",
+    "detector_signal",
+    "detector_signal_strength"
+  ],
+  "allowed_counter_ids": [
+    "counter_signal",
+    "uncertainty_level"
+  ]
+}
+```
+
+关键规则：
+
+```text
+prediction_score 不给 LLM 看；
+prediction_score 不能作为 supporting_evidence；
+counter_signal 不能作为 supporting_evidence；
+uncertainty_level 不能单独支撑强风险类型，只能支撑 weak_or_uncertain_evidence 或作为 counter evidence。
+```
+
+这样可以直接回应 score leakage 质疑。换句话说，LLM 不能因为“分数高”而生成恶意 rationale，它必须从 detector-native evidence 中选择证据。
+
+---
+
+## 3. Detector-Evidence Adapter Protocol
+
+为了避免被认为只是 BWGNN 插件，终极版必须把 detector evidence interface 写成协议。
+
+[
+E_v = E_{\text{generic}}(v) \cup E_{\text{detector}}(v) \cup E_{\text{counter}}(v)
+]
+
+### 3.1 Generic Evidence
+
+所有 detector 都应尽量提供：
+
+```text
+degree_level
+neighbor_consistency
+feature_neighbor_discrepancy
+uncertainty_level
+```
+
+### 3.2 Detector-Native Evidence
+
+不同 detector 提供不同 native signal。
+
+| Detector                                   | detector_signal                                        |
+| ------------------------------------------ | ------------------------------------------------------ |
+| BWGNN                                      | normalized high-frequency / band-pass response         |
+| CARE-GNN                                   | camouflage-resistant neighbor selection score          |
+| GAT                                        | attention concentration on suspicious neighbors        |
+| GCN / GraphSAGE                            | message disagreement or embedding-neighbor discrepancy |
+| XGBoost / LightGBM + neighborhood features | feature importance risk signal                         |
+
+BWGNN 本身就是利用谱域和空间局部化 band-pass filters 来处理异常中的 right-shift 现象，因此它的 high-frequency response 可以自然作为 detector-native evidence。([arXiv][3])
+CARE-GNN 针对 fraudster camouflage，使用 label-aware similarity、RL neighbor selection 和 relation-aware aggregation，对应的 neighbor selection / camouflage resistance signal 也适合作为 evidence adapter 输出。([arXiv][4])
+
+### 3.3 Counter Evidence
+
+```text
+counter_signal
+benign_neighbor_signal
+high_uncertainty_signal
+evidence_unavailable_signal
+```
+
+终极版主文要明确：
+
+> GReaD-Core is detector-adaptable when the base detector exposes at least one computable detector-native evidence signal.
+
+不要说 any detector。
+
+---
+
+## 4. Trace Node Selection
+
+保留原三桶，但增加 **bucket 内 evidence diversity**。
+
+原方案：
+
+```text
+1/3 uncertain nodes
+1/3 high-confidence fraud nodes
+1/3 high-confidence benign nodes
+```
+
+终极版：
+
+```text
+Within each bucket, select nodes that maximize evidence-pattern diversity.
+```
+
+做法很简单：把 MEP reasoning channel 转成离散向量，然后在每个 bucket 内用 greedy coverage 或 k-medoids 选样本，使 selected trace nodes 覆盖更多 evidence slot 组合。
+
+主方法仍然是 3-bucket，不把 evidence-conflict bucket 放进主文。
+evidence-conflict bucket 可以作为 appendix ablation：
+
+```text
+3-bucket + conflict bucket
+```
+
+理由：conflict bucket 有价值，但会引入额外定义；主文优先保持 minimal。
+
+---
+
+## 5. Evidence Rationale Record
+
+终极版 ERR schema 建议改成 signed evidence。
+
+```json
+{
+  "risk_type": "spectral_anomaly",
+  "supporting_evidence": [
+    "detector_signal",
+    "neighbor_consistency"
+  ],
+  "counter_evidence": [
+    "counter_signal"
+  ],
+  "summary": "The node shows strong high-frequency detector evidence and low neighbor consistency, while benign-neighbor evidence is only moderate."
+}
+```
+
+训练仍然只使用：
+
+```text
+risk_type
+supporting_evidence
+counter_evidence
+```
+
+但 evidence head 不再输出单一 mask，而是输出两个 mask：
+
+[
+\hat m_v^+,\hat m_v^-
+]
+
+其中：
+
+* (\hat m_v^+)：supporting evidence mask；
+* (\hat m_v^-)：counter evidence mask。
+
+这样可以解决“counter_signal 被误当 supporting evidence”的问题。
+
+---
+
+## 6. Risk Type Taxonomy
+
+建议保留 6 类：
+
+```text
+structural_discrepancy
+camouflage_neighbor
+spectral_anomaly
+feature_structure_conflict
+relation_or_burst_anomaly
+weak_or_uncertain_evidence
+```
+
+但第一篇实验可以只激活 4–6 类。
+如果主实验以 BWGNN 为核心，至少激活：
+
+```text
+structural_discrepancy
+camouflage_neighbor
+spectral_anomaly
+feature_structure_conflict
+weak_or_uncertain_evidence
+```
+
+`relation_or_burst_anomaly` 可在有多关系或时间突发数据集时启用。
+
+---
+
+# 五、核心升级：Evidence Contract Verifier
+
+这是整篇论文能否从 borderline 变成 strong revision 的关键。
+
+原 verifier：
+
+```text
+schema valid
+risk type valid
+evidence id valid
+risk-evidence compatible
+```
+
+终极版 verifier：
+
+[
+a_v = V_{\text{schema}}
+\cdot V_{\text{availability}}
+\cdot V_{\text{role}}
+\cdot V_{\text{contract}}
+\cdot V_{\text{score-blind}}
+\cdot V_{\text{label}}
+]
+
+## 1. Schema Validity
+
+```text
+ERR must be valid JSON;
+risk_type ∈ fixed taxonomy;
+supporting_evidence and counter_evidence must be lists.
+```
+
+## 2. Evidence Availability
+
+```text
+Every cited evidence must appear in E_v;
+No unavailable evidence can be cited.
+```
+
+如果：
+
+```json
+"detector_signal": "unavailable"
+```
+
+那么 `detector_signal` 不能出现在 supporting evidence。
+
+## 3. Role Consistency
+
+```text
+supporting_evidence ⊆ allowed_support_ids
+counter_evidence ⊆ allowed_counter_ids
+supporting_evidence ∩ counter_evidence = ∅
+```
+
+尤其：
+
+```text
+counter_signal cannot be supporting evidence.
+prediction_score cannot be supporting evidence.
+```
+
+## 4. Risk-Evidence Contract
+
+为每个 risk type 定义 contract：
+
+[
+C_t = (R_t, O_t, F_t)
+]
+
+其中：
+
+* (R_t)：required evidence condition；
+* (O_t)：optional evidence condition；
+* (F_t)：forbidden evidence condition。
+
+例子：
+
+### spectral_anomaly
+
+```text
+Required:
+  detector_signal ∈ {
+    high_frequency_response_high,
+    spectral_energy_shift_high,
+    bandpass_response_high
+  }
+
+Optional:
+  neighbor_consistency ∈ {low, medium}
+  detector_signal_strength ∈ {moderate, strong}
+
+Forbidden:
+  detector_signal = unavailable
+  detector_signal_strength = weak
+  supporting_evidence only contains uncertainty_level
+```
+
+### camouflage_neighbor
+
+```text
+Required:
+  neighbor_consistency = low
+  OR detector_signal = camouflage_neighbor_filter_high
+  OR counter_signal indicates benign-neighbor camouflage tension
+
+Optional:
+  degree_level = high
+  feature_neighbor_discrepancy = high
+
+Forbidden:
+  neighbor_consistency = high
+  AND counter_signal = benign_neighbor_signal_high
+  AND no detector-native support
+```
+
+### feature_structure_conflict
+
+```text
+Required:
+  feature_neighbor_discrepancy = high
+
+Optional:
+  neighbor_consistency = low
+  detector_signal_strength ∈ {moderate, strong}
+
+Forbidden:
+  feature_neighbor_discrepancy ∈ {low, unavailable}
+```
+
+### structural_discrepancy
+
+```text
+Required:
+  degree_level ∈ {very_low, high, burst}
+  OR neighbor_consistency = low
+
+Optional:
+  feature_neighbor_discrepancy = medium/high
+
+Forbidden:
+  degree_level = normal
+  AND neighbor_consistency = high
+  AND no detector-native support
+```
+
+### relation_or_burst_anomaly
+
+```text
+Required:
+  degree_level = burst
+  OR detector_signal indicates relation/burst anomaly
+
+Optional:
+  neighbor_consistency = low
+
+Forbidden:
+  all structural evidence normal
+```
+
+### weak_or_uncertain_evidence
+
+```text
+Required:
+  uncertainty_level = high
+  OR detector_signal = unavailable
+  OR no positive risk contract is satisfied
+
+Optional:
+  counter_signal = benign_neighbor_signal_high
+
+Forbidden:
+  strong positive detector_signal with no counter evidence
+```
+
+## 5. Score-Blindness Check
+
+Verifier 直接拒绝任何把 score 当证据的 ERR。
+
+```text
+prediction_score ∉ supporting_evidence
+prediction_score ∉ counter_evidence
+```
+
+如果 prompt 中完全不提供 prediction_score，这条自然满足；如果为了展示或校准保留 score，则必须保证它不在 allowed evidence ids 中。
+
+## 6. Label Compatibility Check
+
+对于训练集有标签节点：
+
+```text
+if y_v = 1:
+  risk_type cannot be weak_or_uncertain_evidence unless uncertainty is high and fraud score is ambiguous
+
+if y_v = 0:
+  risk_type cannot be strong malicious types unless contract support is very strong and label is treated as noisy
+```
+
+更稳的写法是：
+
+```text
+For labeled trace nodes, the polarity of the accepted risk type must not contradict the ground-truth label.
+```
+
+这条规则非常重要，因为它防止“合规但事实错误”的 LLM rationale 被蒸馏进模型。
+
+## 7. Soundness Claim
+
+终极版可以给出一个强而克制的命题：
+
+> If (\text{ECV}(R_v,E_v,y_v)=1), then the accepted ERR is schema-valid, evidence-closed, role-consistent, score-blind, contract-consistent, and label-compatible under the predefined risk taxonomy.
+
+注意不要说：
+
+```text
+therefore the explanation is causally correct
+```
+
+只能说：
+
+```text
+contract-consistent and counterfactually testable
+```
+
+这比原方案“risk type compatible with selected evidence”硬得多，也能直接回应 18 条意见中反复出现的 “schema validation is not verification” 问题。
+
+---
+
+# 六、Evidence-Conditioned Student Reasoner
+
+原方案两个 head 只看 (z_v)：
+
+[
+h_{\text{type}}(z_v)
+]
+
+[
+h_{\text{evidence}}(z_v)
+]
+
+终极版改为 evidence-conditioned：
+
+[
+g_v = \phi(E_v)
+]
+
+[
+\hat t_v = h_{\text{type}}([z_v; g_v])
+]
+
+[
+(\hat m_v^+,\hat m_v^-) = h_{\text{evidence}}([z_v; g_v])
+]
+
+其中 (g_v) 是 MEP reasoning channel 的离散/连续 embedding。
+
+## Evidence-Gated Residual Fraud Readout
+
+为了解决 CEC disconnected rationale 问题，最终 score 不应完全绕开 evidence head。
+
+定义 base score：
+
+[
+p_v^{\text{base}} = f_\theta(G,X,v)
+]
+
+定义 evidence-gated residual：
+
+[
+r_v = q_\psi([z_v; g_v \odot (\hat m_v^+ - \hat m_v^-)])
+]
+
+最终 fraud score：
+
+[
+\text{logit}(s_v)
+=================
+
+\text{logit}(p_v^{\text{base}})
++
+\rho r_v
+]
+
+其中 (\rho) 是小系数，例如 0.1，或者通过 validation 固定。
+
+这样做的好处是：
+
+1. base detector 仍然是主干；
+2. evidence reasoning 只做 residual calibration；
+3. evidence mask 会实际影响最终 score；
+4. CEC-score 终于在架构上可计算；
+5. 推理时仍然不调用 LLM。
+
+这不等于声称因果解释。它只说明：
+
+> The prediction is evidence-responsive under controlled evidence perturbations.
+
+这一点与 GNN explanation 领域的 counterfactual evaluation 思路一致。GNNExplainer 通过最大化 GNN 预测与解释子图之间的互信息来寻找关键结构，CF-GNNExplainer 则通过最小扰动使预测改变来生成反事实解释。GReaD-Core 不需要复刻这些方法，但需要在评价上对齐“扰动证据后预测应响应”的基本要求。([NeurIPS 会议论文集][5])
+
+---
+
+# 七、Training Protocol
+
+终极版必须写成两阶段。
+
+## Stage 1: Base Detector Warm-up
+
+先训练 base detector：
+
+[
+\min_\theta L_{\text{sup}}(s_v,y_v)
+]
+
+得到稳定的：
+
+```text
+p_v
+z_v
+detector_signal
+uncertainty
+```
+
+这一步解决 MEP 噪声问题。
+
+## Stage 2: Offline ERR Generation and Verification
+
+对 trace nodes 抽取 score-blind MEP：
+
+[
+E_v = A_d(f_\theta,G,X,v)
+]
+
+调用 LLM：
+
+[
+R_v = M(P(E_v))
+]
+
+通过 ECV：
+
+[
+a_v = \text{ECV}(R_v,E_v,y_v)
+]
+
+只保留 (a_v=1) 的 ERR。
+
+## Stage 3: Reasoner Distillation
+
+训练 evidence-conditioned student reasoner。
+
+主损失：
+
+[
+L_{\text{sup}} = BCE(y_v, s_v)
+]
+
+risk type loss：
+
+[
+L_{\text{type}} = CE(t_v,\hat t_v)
+]
+
+signed evidence loss：
+
+[
+L_{\text{evidence}}
+===================
+
+BCE(m_v^+,\hat m_v^+)
++
+BCE(m_v^-,\hat m_v^-)
+]
+
+总损失：
+
+[
+L =
+L_{\text{sup}}
++
+\lambda a_v
+(
+L_{\text{type}}
++
+L_{\text{evidence}}
+)
+]
+
+主文仍可固定：
+
+[
+\lambda = 0.5
+]
+
+为了稳健，可以在实现里用前若干 epoch linear warm-up：
+
+[
+\lambda_e = 0.5 \cdot \min(1, e / E_{\text{warm}})
+]
+
+但主叙事仍然是：
+
+```text
+one supervised loss
++ one auxiliary reasoning loss
+```
+
+不建议在主方法引入 DHEF、GMM filtering、per-sample soft weighting。它们会复杂化叙事，也可能被质疑为用 student 自己过滤 teacher，强化确认偏差。
+
+---
+
+# 八、Inference
+
+推理时不调用 LLM。
+
+输入：
+
+[
+G,X,v
+]
+
+base detector + adapter 输出：
+
+```text
+p_base
+z_v
+E_v
+```
+
+student reasoner 输出：
+
+```json
+{
+  "fraud_score": 0.84,
+  "risk_type": "spectral_anomaly",
+  "supporting_evidence": [
+    "detector_signal",
+    "neighbor_consistency"
+  ],
+  "counter_evidence": [
+    "counter_signal"
+  ],
+  "explanation": "The node is predicted as suspicious because strong detector-native spectral evidence and low neighbor consistency support a spectral anomaly, while benign-neighbor evidence is only moderate."
+}
+```
+
+explanation 用 deterministic template 生成，不用 LLM。
+
+---
+
+# 九、Evaluation Protocol
+
+终极版实验必须分三层。
+
+## Level 1: Detection Performance
+
+```text
+ROC-AUC
+AUPRC
+Recall@K
+F1
+Precision@K
+```
+
+尤其建议报告 AUPRC 和 Recall@K，因为欺诈检测类不平衡场景下 ROC-AUC 可能不够敏感。
+
+## Level 2: Reasoning Quality
+
+```text
+Verifier acceptance rate
+Contract violation rate
+Risk-type agreement on accepted ERR
+Evidence F1 against accepted ERR
+Evidence sparsity
+Signed evidence role accuracy
+Template validity
+```
+
+如果没有人工 risk type ground truth，可以做：
+
+```text
+human audit on 200 sampled rationales
+expert agreement
+LLM-as-judge only as auxiliary, not as ground truth
+```
+
+## Level 3: Faithfulness / Responsiveness
+
+把原单一 CEC 升级为三元 CEC。
+
+### CEC-score
+
+[
+CEC_{\text{score}}
+==================
+
+\frac{1}{N}
+\sum_v
+\mathbb{1}
+[
+s_v(E_v) - s_v(E_v^{-}) > 0
+]
+]
+
+### CEC-type
+
+[
+CEC_{\text{type}}
+=================
+
+\frac{1}{N}
+\sum_v
+\mathbb{1}
+[
+P(\hat t_v=t_v|E_v)
+-------------------
+
+P(\hat t_v=t_v|E_v^{-})
+
+> 0
+> ]
+> ]
+
+### CEC-evidence
+
+[
+CEC_{\text{evidence}}
+=====================
+
+\frac{1}{N}
+\sum_v
+\mathbb{1}
+[
+P(\hat m_v^+|E_v)
+-----------------
+
+P(\hat m_v^+|E_v^{-})
+
+> 0
+> ]
+> ]
+
+其中 (E_v^{-}) 是削弱 supporting evidence 后的 MEP。
+
+例如：
+
+```text
+detector_signal = high_frequency_response_high
+→ detector_signal = neutral
+```
+
+或者：
+
+```text
+neighbor_consistency = low
+→ neighbor_consistency = medium/high
+```
+
+注意措辞：
+
+```text
+counterfactual evidence consistency
+```
+
+不要写：
+
+```text
+causal faithfulness guaranteed
+```
+
+GraphNarrator 已经把“自然语言解释 GNN”推进到 explanation generation 与 explanation quality evaluation；因此 GReaD-Core 必须证明自己不是只会生成模板解释，而是能输出可验证、可扰动、可响应的 evidence reasoning。([arXiv][6])
+
+---
+
+# 十、Non-Redundancy Test：证明不是 score echo
+
+这是终极版必须加入的实验，否则 score-blind 的贡献说服力不足。
+
+定义：
+
+```text
+Y = ground-truth fraud label
+P = base prediction score
+T = predicted risk type
+M = predicted evidence mask
+```
+
+需要证明：
+
+[
+I(T,M;Y|P) > 0
+]
+
+实验上可以用替代检验：
+
+```text
+AUC(Y ~ P)
+AUC(Y ~ P + T)
+AUC(Y ~ P + T + M)
+```
+
+以及：
+
+```text
+AUPRC(Y ~ P)
+AUPRC(Y ~ P + T)
+AUPRC(Y ~ P + T + M)
+```
+
+如果加入 (T,M) 后仍无提升，说明 reasoning head 只是 score echo。
+
+还要报告：
+
+```text
+corr(prediction_score, risk_type_confidence)
+corr(prediction_score, evidence_mask_confidence)
+```
+
+理想情况是相关性不能过高，并且 (T,M) 对 (Y) 有条件增量预测力。
+
+---
+
+# 十一、Baselines and Ablations
+
+## Baselines
+
+至少包括：
+
+```text
+Base detector only
+Base detector + naive heads without LLM
+Base detector + LLM ERR without verifier
+Base detector + schema verifier only
+Base detector + Evidence Contract Verifier
+GNNExplainer / PGExplainer-style explanation baseline
+MLED / FraudCoT if dataset has text-attributed graph setting
+Tree ensemble + neighborhood aggregation
+```
+
+GADBench 的结论要求你必须纳入强传统基线，尤其是 XGBoost / LightGBM + neighborhood aggregation，否则实验说服力不够。([arXiv][2])
+
+## Ablations
+
+必须做：
+
+```text
+w/o score-blind MEP
+w/o Evidence Contract Verifier
+w/o label compatibility
+w/o role consistency
+w/o evidence-gated residual readout
+w/o signed evidence mask
+w/o diversity trace selection
+fixed λ vs warm-up λ
+BWGNN only vs multi-detector adapter
+```
+
+关键 ablation 排序：
+
+1. `schema verifier only` vs `Evidence Contract Verifier`
+2. `score-visible MEP` vs `score-blind MEP`
+3. `parallel heads` vs `evidence-gated residual readout`
+4. `single detector` vs `adapter protocol across detectors`
+
+---
+
+# 十二、最终论文摘要草案
+
+## 英文版
+
+> We propose GReaD-Core, a contract-verified score-blind evidence distillation framework for graph fraud detection. Instead of prompting LLMs with full graph neighborhoods or treating free-form rationales as pseudo-labels, GReaD-Core first converts a trained fraud detector into a compact detector-native evidence interface. To avoid score leakage, the LLM teacher only observes score-blind evidence fields and generates a structured Evidence Rationale Record over a fixed risk taxonomy. The rationale is accepted only if it satisfies an Evidence Contract Verifier, which checks evidence availability, evidence role consistency, risk-evidence contracts, score-blindness, and label compatibility. Accepted rationales supervise lightweight risk-type and signed-evidence heads through a single auxiliary reasoning loss. At inference time, GReaD-Core requires no LLM calls and outputs fraud scores, risk types, signed evidence masks, and template-based explanations. We further evaluate explanation faithfulness using tri-level counterfactual evidence consistency and demonstrate that the learned reasoning outputs provide non-redundant information beyond the base detector score.
+
+## 中文版
+
+> GReaD-Core 是一个面向图欺诈检测的契约校验、分数盲化证据蒸馏框架。它不让 LLM 读取完整图邻域，也不把自由文本解释直接当作监督，而是先将已训练图欺诈检测器转化为极简 detector-native evidence interface。为避免 score leakage，LLM teacher 只能看到 score-blind 证据字段，并基于固定风险类型生成结构化 Evidence Rationale Record。该 rationale 只有通过 Evidence Contract Verifier 对证据可用性、证据角色、风险-证据契约、分数盲化和标签极性一致性的校验后，才能作为辅助监督进入训练。推理阶段，GReaD-Core 不调用 LLM，即可输出欺诈分数、风险类型、有符号证据掩码和模板化解释。我们进一步通过三元 Counterfactual Evidence Consistency 和 non-redundancy test 验证模型解释对证据扰动的响应性，以及 reasoning 输出相对于 base score 的增量价值。
+
+---
+
+# 十三、最终版本一句话
+
+**原方案：**
+
+> 少量 LLM 证据解释 + hard verifier + 一个辅助推理损失。
+
+**终极版：**
+
+> **Score-blind detector-native evidence → contract-verified ERR → evidence-conditioned residual reasoner → LLM-free fraud reasoning.**
+
+这是最稳的 TKDE 版本。它没有背离你原来的 minimal、verified、detector-native、LLM-free 精神，但补上了原方案最容易被审稿人击穿的五个洞：**schema verifier 不够硬、prediction_score 泄漏、CEC 断裂、训练冷启动不稳、跨 detector 不可比**。
+
+[1]: https://arxiv.org/abs/2507.11997?utm_source=chatgpt.com "Can LLMs Find Fraudsters? Multi-level LLM Enhanced Graph Fraud Detection"
+[2]: https://arxiv.org/abs/2306.12251?utm_source=chatgpt.com "GADBench: Revisiting and Benchmarking Supervised Graph Anomaly Detection"
+[3]: https://arxiv.org/abs/2205.15508?utm_source=chatgpt.com "Rethinking Graph Neural Networks for Anomaly Detection"
+[4]: https://arxiv.org/abs/2008.08692?utm_source=chatgpt.com "Enhancing Graph Neural Network-based Fraud Detectors against Camouflaged Fraudsters"
+[5]: https://proceedings.neurips.cc/paper_files/paper/2019/file/d80b7040b773199015de6d3b4293c8ff-Paper.pdf?utm_source=chatgpt.com "GNNExplainer: Generating Explanations for Graph Neural Networks"
+[6]: https://arxiv.org/abs/2410.15268?utm_source=chatgpt.com "[2410.15268] GraphNarrator: Generating Textual Explanations for Graph ..."

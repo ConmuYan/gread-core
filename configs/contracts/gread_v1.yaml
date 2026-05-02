@@ -1,0 +1,108 @@
+risk_types:
+  spectral_anomaly:
+    required_any:
+      - field: detector_signal
+        values:
+          - high_frequency_response_high
+          - spectral_energy_shift_high
+          - bandpass_response_high
+    optional:
+      - field: neighbor_consistency
+        values: [low, medium]
+      - field: detector_signal_strength
+        values: [moderate, strong]
+    forbidden:
+      - field: detector_signal
+        values: [unavailable]
+      - field: detector_signal_strength
+        values: [weak]
+
+  camouflage_neighbor:
+    required_any:
+      - field: neighbor_consistency
+        values: [low]
+      - field: detector_signal
+        values:
+          - camouflage_neighbor_filter_high
+          - neighbor_selection_disagreement_high
+          - relation_aware_camouflage_signal
+    optional:
+      - field: degree_level
+        values: [high, burst]
+      - field: feature_neighbor_discrepancy
+        values: [high]
+    forbidden:
+      - field: neighbor_consistency
+        values: [high]
+
+  feature_structure_conflict:
+    required_any:
+      - field: feature_neighbor_discrepancy
+        values: [high]
+    optional:
+      - field: neighbor_consistency
+        values: [low, medium]
+      - field: detector_signal_strength
+        values: [moderate, strong]
+    forbidden:
+      - field: feature_neighbor_discrepancy
+        values: [low, unavailable]
+
+  structural_discrepancy:
+    required_any:
+      - field: degree_level
+        values: [very_low, high, burst]
+      - field: neighbor_consistency
+        values: [low]
+    optional:
+      - field: feature_neighbor_discrepancy
+        values: [medium, high]
+    forbidden:
+      - field: degree_level
+        values: [normal]
+
+  relation_or_burst_anomaly:
+    required_any:
+      - field: degree_level
+        values: [burst]
+      - field: detector_signal
+        values:
+          - relation_anomaly_high
+          - burst_anomaly_high
+    optional:
+      - field: neighbor_consistency
+        values: [low]
+    forbidden: []
+
+  weak_or_uncertain_evidence:
+    required_any:
+      - field: uncertainty_level
+        values: [high]
+      - field: detector_signal
+        values: [unavailable]
+    optional:
+      - field: counter_signal
+        values:
+          - benign_neighbor_signal_high
+          - benign_neighbor_signal_medium
+    forbidden: []
+
+role_rules:
+  forbidden_support_ids:
+    - prediction_score
+    - counter_signal
+  forbidden_counter_ids:
+    - prediction_score
+  uncertainty_cannot_support_strong_risk_alone: true
+
+label_compatibility:
+  enabled: true
+  label_noise_mode: false
+  fraud_label: 1
+  benign_label: 0
+  fraud_forbidden_risk_types:
+    - weak_or_uncertain_evidence
+  benign_forbidden_risk_types:
+    - camouflage_neighbor
+    - spectral_anomaly
+    - relation_or_burst_anomaly

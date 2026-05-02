@@ -1,0 +1,16 @@
+template: |
+  You are analyzing node {node_id} in a fraud detection graph.
+  Detector: {detector_name}
+
+  Evidence signals:
+  {reasoning_payload}
+
+  Based on the evidence, provide:
+  1. risk_type: one of [structural_discrepancy, camouflage_neighbor, spectral_anomaly, feature_structure_conflict, relation_or_burst_anomaly, weak_or_uncertain_evidence]
+  2. supporting_evidence: list of evidence IDs that support the risk classification
+  3. counter_evidence: list of evidence IDs that suggest benign behavior
+  4. summary: brief explanation (1-2 sentences)
+
+  Respond in JSON format.
+max_tokens: 512
+temperature: 0.0

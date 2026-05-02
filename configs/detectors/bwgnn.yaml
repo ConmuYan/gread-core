@@ -1,0 +1,5 @@
+type: bwgnn
+hidden_channels: 64
+num_layers: 2
+dropout: 0.5
+num_coeffs: 3

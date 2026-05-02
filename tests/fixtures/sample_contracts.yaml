@@ -1,0 +1,30 @@
+risk_types:
+  structural_discrepancy:
+    required_any:
+      - field: neighbor_consistency
+        values: [low]
+    optional:
+      - field: degree_level
+        values: [high, burst]
+    forbidden: []
+  weak_or_uncertain_evidence:
+    required_any:
+      - field: uncertainty_level
+        values: [high]
+    optional: []
+    forbidden: []
+role_rules:
+  forbidden_support_ids:
+    - prediction_score
+    - counter_signal
+  forbidden_counter_ids:
+    - prediction_score
+  uncertainty_cannot_support_strong_risk_alone: true
+label_compatibility:
+  enabled: true
+  fraud_label: 1
+  benign_label: 0
+  fraud_forbidden_risk_types:
+    - weak_or_uncertain_evidence
+  benign_forbidden_risk_types:
+    - camouflage_neighbor

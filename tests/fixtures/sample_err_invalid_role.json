@@ -1,0 +1,6 @@
+{
+  "risk_type": "structural_discrepancy",
+  "supporting_evidence": ["prediction_score", "degree_level"],
+  "counter_evidence": ["counter_signal"],
+  "summary": "Invalid: prediction_score in supporting evidence."
+}

@@ -1,0 +1,5 @@
+type: caregnn
+hidden_channels: 64
+num_relations: 2
+sim_threshold: 0.5
+dropout: 0.5

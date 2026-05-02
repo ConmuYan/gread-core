@@ -1,0 +1,75 @@
+# Small-scale validation: BWGNN on YelpChi (10 epochs).
+
+project:
+  name: gread-core-val-bwgnn-yelpchi
+  seed: 1
+  output_dir: artifacts/full_bwgnn_yelpchi
+
+detector:
+  hidden_channels: 64
+  type: bwgnn
+
+stage1:
+  epochs: 100
+  lr: 0.001
+  weight_decay: 0.0005
+  log_every: 10
+  save_every: 50
+
+stage2:
+  llm_backend: replay
+  cache_dir: .cache/llm_full_bwgnn_yelpchi
+  trace_budget: 100
+
+stage3:
+  epochs: 100
+  lr: 0.001
+  weight_decay: 0.00001
+  log_every: 10
+  save_every: 50
+
+method:
+  score_blind: true
+  lambda_reason: 0.5
+  residual_rho: 0.1
+  signed_evidence_masks: true
+
+evidence:
+  num_slots: 16
+
+risk_taxonomy:
+  types:
+    - structural_discrepancy
+    - camouflage_neighbor
+    - spectral_anomaly
+    - feature_structure_conflict
+    - relation_or_burst_anomaly
+    - weak_or_uncertain_evidence
+
+trace_selection:
+  total_budget: 100
+  buckets:
+    uncertain: 0.333
+    high_conf_fraud: 0.333
+    high_conf_benign: 0.334
+  diversity_sampling: true
+  conflict_bucket:
+    enabled: false
+
+verifier:
+  contract_path: configs/contracts/gread_v1.yaml
+  label_compatibility: true
+
+experimental:
+  dhef:
+    enabled: false
+  cer_regularizer:
+    enabled: false
+  evidence_conflict_bucket:
+    enabled: false
+  adaptive_lambda:
+    enabled: false
+  prototype_prompting:
+    enabled: false
+  llm_self_consistency:
+    enabled: false

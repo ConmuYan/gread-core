@@ -1,0 +1,3 @@
+dataset: tiny
+seed: 1
+num_nodes: 50
