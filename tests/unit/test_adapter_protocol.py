@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 from torch import Tensor
 
 from gread_core.adapters.base import EvidenceAdapter

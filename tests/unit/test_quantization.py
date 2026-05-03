@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("torch")
 from gread_core.evidence.quantization import (
     DEFAULT_CONSISTENCY_THRESHOLDS,
     DEFAULT_DEGREE_THRESHOLDS,

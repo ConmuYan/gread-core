@@ -12,7 +12,8 @@ from __future__ import annotations
 import re
 
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 
 from gread_core.data.loaders import load_tiny_graph
 from gread_core.data.splits import generate_masks, stratified_split

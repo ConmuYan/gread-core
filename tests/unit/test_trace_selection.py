@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import random
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 from torch import Tensor
 
 from gread_core.schemas.evidence import (

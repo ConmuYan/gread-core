@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("jinja2")
 from gread_core.llm.cache import PromptCache
 
 

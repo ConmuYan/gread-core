@@ -8,8 +8,9 @@ Validates:
 
 from __future__ import annotations
 
-import torch
+import pytest
 
+torch = pytest.importorskip("torch")
 from gread_core.evidence.generic_signals import (
     compute_degree_level,
     compute_feature_neighbor_discrepancy,

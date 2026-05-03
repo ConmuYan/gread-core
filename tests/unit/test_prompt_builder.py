@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("jinja2")
 from gread_core.llm.prompt_builder import PromptBuilder
 from gread_core.schemas.evidence import (
     CalibrationChannel,

@@ -9,8 +9,9 @@ Contract:
 
 from __future__ import annotations
 
-import torch
+import pytest
 
+torch = pytest.importorskip("torch")
 from gread_core.losses.reasoning import ReasoningLoss
 
 

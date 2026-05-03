@@ -6,7 +6,9 @@ Validates that each detector:
 - Follows the DetectorProtocol contract
 """
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 from torch_geometric.data import Data
 
 from gread_core.detectors.bwgnn import BWGNNDetector

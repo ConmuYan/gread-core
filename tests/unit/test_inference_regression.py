@@ -6,7 +6,9 @@ evidence slot names are all from the canonical EVIDENCE_SLOTS_ORDERED list.
 
 from __future__ import annotations
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 import torch.nn as nn
 
 from gread_core.adapters.base import EvidenceAdapter

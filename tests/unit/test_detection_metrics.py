@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from gread_core.evaluation.detection import (
     compute_all_detection_metrics,

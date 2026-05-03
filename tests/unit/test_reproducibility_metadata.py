@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import torch
+import pytest
 
+torch = pytest.importorskip("torch")
 from gread_core.experiment.registry import ExperimentRegistry
 from gread_core.experiment.seed import set_seed
 

@@ -7,8 +7,9 @@ Tested with multiple random seeds for robustness.
 
 from __future__ import annotations
 
-import torch
+import pytest
 
+torch = pytest.importorskip("torch")
 from gread_core.models.evidence_encoder import EvidenceEncoder
 from gread_core.models.reasoner import GReaDReasoner
 
