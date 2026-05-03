@@ -21,17 +21,12 @@ except ImportError:
 
 from gread_core.losses.reasoning import ReasoningLoss
 from gread_core.models.reasoner import GReaDReasoner
+from gread_core.schemas.risk_taxonomy import (
+    EVIDENCE_SLOT_TO_INDEX,
+    RISK_TYPE_TO_INDEX,
+    encode_evidence_slots,
+)
 from gread_core.training.checkpointing import CheckpointManager
-
-# Local mapping from risk type string to class index
-RISK_TYPE_TO_INDEX: dict[str, int] = {
-    "structural_discrepancy": 0,
-    "camouflage_neighbor": 1,
-    "spectral_anomaly": 2,
-    "feature_structure_conflict": 3,
-    "relation_or_burst_anomaly": 4,
-    "weak_or_uncertain_evidence": 5,
-}
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +71,7 @@ def _build_training_batch(
     risk_types = []
     pos_evidence = []
     neg_evidence = []
+    evidence_token_ids_list = []
 
     for err_dict in accepted_errs:
         idx = err_dict["node_idx"]
@@ -94,6 +90,11 @@ def _build_training_batch(
         pos_evidence.append(pos_vec)
         neg_evidence.append(neg_vec)
 
+        # Build evidence token IDs from all cited evidence fields
+        all_evidence_ids = support_ids + counter_ids
+        token_ids = _encode_evidence_to_tokens(all_evidence_ids, num_evidence_slots)
+        evidence_token_ids_list.append(token_ids)
+
     indices = torch.tensor(batch_indices, dtype=torch.long, device=device)
 
     return {
@@ -103,24 +104,28 @@ def _build_training_batch(
         "risk_type_targets": torch.tensor(risk_types, dtype=torch.long, device=device),
         "pos_evidence_targets": torch.stack(pos_evidence).to(device),
         "neg_evidence_targets": torch.stack(neg_evidence).to(device),
+        "evidence_token_ids": torch.stack(evidence_token_ids_list).to(device),
     }
+
+
+def _encode_evidence_to_tokens(evidence_ids: list[str], num_slots: int) -> Tensor:
+    """Convert evidence ID list to token IDs for the evidence encoder."""
+    return torch.tensor(encode_evidence_slots(evidence_ids, num_slots), dtype=torch.long)
 
 
 def _evidence_ids_to_vector(evidence_ids: list[str], num_slots: int) -> Tensor:
     """Convert evidence ID list to binary vector.
 
-    Maps evidence IDs to slot indices. Unknown IDs are ignored.
+    Maps evidence IDs to slot indices using canonical EVIDENCE_SLOT_TO_INDEX.
+    Unknown IDs are ignored.
     """
     vec = torch.zeros(num_slots)
     for eid in evidence_ids:
-        slot = _hash_to_slot(eid, num_slots)
-        vec[slot] = 1.0
+        if eid in EVIDENCE_SLOT_TO_INDEX:
+            slot = EVIDENCE_SLOT_TO_INDEX[eid]
+            if slot < num_slots:
+                vec[slot] = 1.0
     return vec
-
-
-def _hash_to_slot(evidence_id: str, num_slots: int) -> int:
-    """Deterministic hash of evidence_id to slot index."""
-    return hash(evidence_id) % num_slots
 
 
 def train_reasoner(
@@ -201,9 +206,7 @@ def train_reasoner(
         outputs = reasoner(
             z_v=batch["z_v"],
             base_logit=batch["base_logit"],
-            evidence_token_ids=torch.zeros(
-                num_samples, num_evidence_slots, dtype=torch.long, device=device,
-            ),
+            evidence_token_ids=batch["evidence_token_ids"],
         )
 
         losses = loss_fn(

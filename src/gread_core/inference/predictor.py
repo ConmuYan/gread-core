@@ -15,6 +15,7 @@ no forbidden network client modules are imported here.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,10 +27,14 @@ from gread_core.adapters.base import EvidenceAdapter
 from gread_core.inference.explanation_template import generate_explanation
 from gread_core.models.reasoner import GReaDReasoner
 from gread_core.schemas.evidence import MinimalEvidencePackage
-from gread_core.schemas.risk_taxonomy import RISK_TYPES
+from gread_core.schemas.risk_taxonomy import (
+    EVIDENCE_SLOTS_ORDERED,
+    RISK_TYPES_ORDERED,
+    encode_evidence_slots,
+)
 
-# Sorted risk type list for deterministic index-to-label mapping.
-_RISK_TYPE_LIST: list[str] = sorted(RISK_TYPES)
+# Canonical ordered risk type list — must match RISK_TYPE_TO_INDEX in training.
+_RISK_TYPE_LIST: list[str] = RISK_TYPES_ORDERED
 
 # Threshold for evidence mask logits to decide supporting vs counter.
 _EVIDENCE_MASK_THRESHOLD: float = 0.5
@@ -90,7 +95,7 @@ class GReaDInferencePipeline:
         self.num_slots: int = config.get("evidence", {}).get("num_slots", 32)
         self.slot_names: list[str] = config.get("evidence", {}).get(
             "evidence_slot_names",
-            [f"slot_{i}" for i in range(self.num_slots)],
+            EVIDENCE_SLOTS_ORDERED,
         )
 
     # ------------------------------------------------------------------
@@ -101,41 +106,20 @@ class GReaDInferencePipeline:
         self,
         meps: list[MinimalEvidencePackage],
     ) -> Tensor:
-        """Convert a list of MinimalEvidencePackage objects into token IDs.
+        """Convert MEP reasoning fields to token IDs.
 
-        Each evidence field present in the MEP's ReasoningChannel is mapped to
-        a discrete token ID (its position index in ``slot_names``).  Slots not
-        present in the MEP receive token ID 0 (padding).
-
-        Args:
-            meps: One MinimalEvidencePackage per node.
-
-        Returns:
-            LongTensor of shape [B, K].
+        Uses field *names* (not values) as evidence slot identifiers.
+        Token 0 = padding, slot i -> token i + 1.
         """
-        slot_to_idx: dict[str, int] = {
-            name: idx for idx, name in enumerate(self.slot_names)
-        }
-
         batch_ids: list[list[int]] = []
         for mep in meps:
-            ids = [0] * self.num_slots
-            reasoning = mep.reasoning
-            # Map each reasoning-channel field to its slot index.
-            evidence_fields: list[str] = [
-                reasoning.uncertainty_level,
-                reasoning.degree_level,
-                reasoning.neighbor_consistency,
-                reasoning.feature_neighbor_discrepancy,
-                reasoning.detector_signal,
-                reasoning.detector_signal_strength,
-                reasoning.counter_signal,
+            r = mep.reasoning
+            present_fields = [
+                name for name in self.slot_names
+                if getattr(r, name, None) is not None
             ]
-            for field_name in evidence_fields:
-                if field_name in slot_to_idx:
-                    ids[slot_to_idx[field_name]] = slot_to_idx[field_name]
+            ids = encode_evidence_slots(present_fields, self.num_slots)
             batch_ids.append(ids)
-
         return torch.tensor(batch_ids, dtype=torch.long)
 
     # ------------------------------------------------------------------
@@ -179,10 +163,20 @@ class GReaDInferencePipeline:
         self.detector.eval()
         self.reasoner.eval()
 
-        # Step 1: detector forward pass.
+        # Step 1: forward pass on full graph (no masks) for [N] logits.
+        inference_graph = copy.copy(graph)
+        for attr in ("train_mask", "val_mask", "test_mask"):
+            if hasattr(inference_graph, attr):
+                setattr(inference_graph, attr, None)
+
         with torch.no_grad():
-            base_logit, embeddings = self.detector.forward_with_embedding(graph)  # type: ignore[operator]
-        # embeddings: [B, H],  base_logit: [B]
+            all_logits, all_embeddings = self.detector.forward_with_embedding(inference_graph)  # type: ignore[operator]
+        # all_logits: [N], all_embeddings: [N, H]
+
+        # Index by target node_ids for batch safety.
+        node_idx = torch.tensor(node_ids, dtype=torch.long)
+        base_logit = all_logits[node_idx]      # [B]
+        embeddings = all_embeddings[node_idx]   # [B, H]
 
         # Step 2: extract evidence packages.
         meps = self.adapter.extract(node_ids)
@@ -222,14 +216,17 @@ class GReaDInferencePipeline:
             )
 
             # Supporting / counter evidence slot names.
+            # Cap at actual slot_names length to avoid index mismatch
+            # when num_slots > len(slot_names).
+            max_idx = min(self.num_slots, len(self.slot_names))
             supporting = [
                 self.slot_names[j]
-                for j in range(self.num_slots)
+                for j in range(max_idx)
                 if pos_mask[i, j].item()
             ]
             counter = [
                 self.slot_names[j]
-                for j in range(self.num_slots)
+                for j in range(max_idx)
                 if neg_mask[i, j].item()
             ]
 

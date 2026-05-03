@@ -30,22 +30,32 @@ DEFAULT_WEAKEN_CONFIG: dict[str, dict[str, str]] = {
     "detector_signal": {
         "high_frequency_response_high": "neutral_frequency_response_medium",
         "high_frequency_response_medium": "neutral_frequency_response_medium",
+        "neutral": "low_frequency_response_low",
+        "embedding_neighbor_discrepancy_high": "neutral",
+        "message_disagreement_high": "neutral",
+        "attention_concentration_high": "neutral",
     },
     "detector_signal_strength": {
         "strong": "weak",
         "moderate": "weak",
+        "weak": "unavailable",
     },
     "neighbor_consistency": {
         "low": "high",
         "medium": "high",
+        "high": "low",
     },
     "feature_neighbor_discrepancy": {
         "high": "low",
         "medium": "low",
+        "low": "high",
     },
     "degree_level": {
         "burst": "normal",
         "high": "normal",
+        "medium": "low",
+        "low": "high",
+        "normal": "burst",
     },
 }
 
@@ -106,11 +116,12 @@ def _mep_to_evidence_token_ids(
     token_ids = torch.zeros(num_slots, dtype=torch.long)
     reasoning_dict = mep.reasoning.model_dump()
 
-    for slot_name, token_id in slot_to_id.items():
-        if slot_name in reasoning_dict:
-            val = reasoning_dict[slot_name]
-            # Encode: hash the value string to a token offset
-            token_ids[token_id] = (hash(val) % (num_slots - 1)) + 1
+    # Map reasoning field NAMES to token IDs (0=padding, slot i -> i+1)
+    for field_name in reasoning_dict:
+        if field_name in slot_to_id:
+            idx = slot_to_id[field_name]
+            if idx < num_slots:
+                token_ids[idx] = idx + 1
 
     result = token_ids.unsqueeze(0).to(dtype=torch.long)
     if device is not None:

@@ -43,7 +43,7 @@ def compute_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     tpr = np.concatenate([[0.0], tpr])
     fpr = np.concatenate([[0.0], fpr])
 
-    auc_val = float(np.trapezoid(tpr, fpr))
+    auc_val = float(np.trapz(tpr, fpr))
     return auc_val
 
 
