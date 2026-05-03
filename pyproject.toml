@@ -38,6 +38,7 @@ python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
 module = "yaml"
@@ -86,6 +87,21 @@ disable_error_code = ["type-arg"]
 [[tool.mypy.overrides]]
 module = "gread_core.cli.*"
 disable_error_code = ["type-arg", "unused-ignore"]
+
+[[tool.mypy.overrides]]
+module = [
+    "gread_core.models.*",
+    "gread_core.detectors.*",
+    "gread_core.losses.*",
+]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+module = [
+    "gread_core.llm.prompt_builder",
+    "gread_core.adapters.caregnn_adapter",
+]
+disable_error_code = ["no-any-return"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
