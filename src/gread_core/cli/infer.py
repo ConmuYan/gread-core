@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 from dataclasses import asdict
@@ -81,6 +82,7 @@ def _load_reasoner(
     hidden_channels = config.get("detector", {}).get("hidden_channels", 64)
     num_evidence_slots = config.get("evidence", {}).get("num_slots", 16)
     rho = config.get("method", {}).get("residual_rho", 0.1)
+    signed_evidence_masks = config.get("method", {}).get("signed_evidence_masks", True)
 
     evidence_encoder = EvidenceEncoder(
         vocab_size=num_evidence_slots + 10,
@@ -95,6 +97,7 @@ def _load_reasoner(
         num_risk_types=6,
         num_evidence_slots=num_evidence_slots,
         rho=rho,
+        signed_evidence_masks=signed_evidence_masks,
     )
 
     model_path = checkpoint_path / "model.pt"
@@ -187,12 +190,21 @@ def main(argv: list[str] | None = None) -> None:
         device=device,
     )
 
-    # Build adapter using detector forward pass on full graph.
+    # Build adapter using detector forward pass on full graph (no masks).
     from gread_core.adapters.pyg_gnn_adapter import PyGGNNAdapter
 
+    inference_graph = copy.copy(data)
+    for attr in ("train_mask", "val_mask", "test_mask"):
+        if hasattr(inference_graph, attr):
+            setattr(inference_graph, attr, None)
+
     with torch.no_grad():
-        logits, embeddings = detector.forward_with_embedding(data)  # type: ignore[operator]
-    adapter = PyGGNNAdapter(detector, data, logits, embeddings)
+        logits, embeddings = detector.forward_with_embedding(inference_graph)  # type: ignore[operator]
+    adapter_thresholds = config.get("adapter", {}).get("thresholds", {})
+    adapter = PyGGNNAdapter(
+        detector, inference_graph, logits, embeddings,
+        thresholds=adapter_thresholds,
+    )
 
     # Build pipeline.
     pipeline = GReaDInferencePipeline(

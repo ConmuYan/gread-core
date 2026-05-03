@@ -103,6 +103,9 @@ for i in "${!CONFIGS[@]}"; do
     python -m gread_core.cli.evaluate \
         --checkpoint "$STAGE3_CKPT" \
         --config "$CONFIG" \
+        --dataset "$DATASET" \
+        --detector "$DETECTOR" \
+        --detector-checkpoint "$STAGE1_CKPT" \
         --output "$OUTPUT_DIR/metrics" \
         --seed "$SEED"
 

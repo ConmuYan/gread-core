@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Create experiment registry
     from gread_core.experiment.registry import ExperimentRegistry
+    split_config = config.get("data", {}).get("split")
     registry = ExperimentRegistry(
         experiment_id=args.experiment_id,
         config=config,
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> None:
         dataset=args.dataset,
         seed=args.seed,
         output_dir=args.output_dir,
+        split_config=split_config,
     )
 
     # Load dataset
@@ -111,6 +113,7 @@ def main(argv: list[str] | None = None) -> None:
         experiment_id=args.experiment_id,
         seed=args.seed,
         config=config,
+        dataset=args.dataset,
     )
 
     device = torch.device(args.device)
@@ -119,13 +122,13 @@ def main(argv: list[str] | None = None) -> None:
 
     writer = None
     if args.tensorboard_dir:
-        from torch.utils.tensorboard import SummaryWriter
-        writer = SummaryWriter(log_dir=args.tensorboard_dir)
+        from torch.utils.tensorboard import SummaryWriter  # type: ignore[attr-defined]
+        writer = SummaryWriter(log_dir=args.tensorboard_dir)  # type: ignore[no-untyped-call]
 
     train_detector(detector, data, config, ckpt_manager, writer=writer)
 
     if writer is not None:
-        writer.close()
+        writer.close()  # type: ignore[no-untyped-call]
 
     manifest_path = registry.write_manifest()
     logging.getLogger(__name__).info(

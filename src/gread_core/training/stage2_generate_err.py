@@ -124,19 +124,56 @@ def generate_errs(
     labels = data.y.cpu() if hasattr(data, "y") else None
 
     # Select trace nodes
-    meps = adapter.extract(list(range(data.num_nodes)))
+    # Performance fix: extract MEPs only for bucket candidates, not all nodes.
+    # Bucket assignment is cheap (scores/uncertainties only), then we extract
+    # MEPs only for the much smaller candidate set.
     selector = TraceSelector(config, seed)
-    selection = selector.select(scores, uncertainties, labels, meps)
+    from gread_core.tracing.buckets import assign_buckets
+
+    bucket_assignments = assign_buckets(scores, uncertainties, labels)
+    bucket_nodes: dict[str, list[int]] = {
+        "uncertain": [],
+        "high_conf_fraud": [],
+        "high_conf_benign": [],
+    }
+    for i, bl in enumerate(bucket_assignments):
+        if bl is not None:
+            bucket_nodes[bl].append(i)
+
+    all_candidates = []
+    for v in bucket_nodes.values():
+        all_candidates.extend(v)
+
+    # Extract MEPs only for bucket candidates (not all N nodes)
+    candidate_meps_list = adapter.extract(all_candidates)
+    candidate_meps = dict(zip(all_candidates, candidate_meps_list, strict=True))
+
+    # Build full meps list indexed by node id for selector
+    # (selector expects meps[node_id] to work)
+    class _MEPProxy:
+        """Lazy MEP lookup that only has entries for candidates."""
+        def __init__(self, mep_map: dict[int, Any]) -> None:
+            self._map = mep_map
+        def __getitem__(self, idx: int) -> Any:
+            return self._map[idx]
+        def __len__(self) -> int:
+            return len(self._map)
+
+    meps = _MEPProxy(candidate_meps)
+    selection = selector.select(scores, uncertainties, labels, meps)  # type: ignore[arg-type]
 
     logger.info("Selected %d trace nodes for ERR generation", len(selection.node_ids))
 
     # Generate ERRs via LLM
-    selected_meps = [meps[i] for i in selection.node_ids]
+    selected_meps = [candidate_meps[i] for i in selection.node_ids]
     selected_labels = (
         [int(labels[i]) for i in selection.node_ids] if labels is not None else None
     )
 
-    err_results = teacher.generate_err(selected_meps, selected_labels)
+    contract_version = config.get("verifier", {}).get("contract_version")
+    err_results = teacher.generate_err(
+        selected_meps, selected_labels, contract_version=contract_version,
+    )
 
     # Separate accepted vs rejected
     # teacher.generate_err already returns only accepted, but we also need
@@ -183,4 +220,4 @@ def _compute_uncertainties(scores: torch.Tensor, embeddings: torch.Tensor) -> to
     Uses entropy-like measure: uncertainty = 1 - |2*score - 1|.
     High uncertainty when score is near 0.5.
     """
-    return 1.0 - torch.abs(2.0 * scores - 1.0)
+    return 1.0 - torch.abs(2.0 * scores - 1.0)  # type: ignore[no-any-return]

@@ -6,7 +6,7 @@ import hashlib
 import json
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,9 @@ class ExperimentRegistry:
         dataset: str,
         seed: int,
         output_dir: str | Path,
+        split_config: dict[str, Any] | None = None,
+        contract_version: str | None = None,
+        detector_checkpoint: str | None = None,
     ) -> None:
         self.experiment_id = experiment_id
         self.config = config
@@ -41,6 +44,13 @@ class ExperimentRegistry:
         self.config_hash = hashlib.sha256(
             json.dumps(config, sort_keys=True).encode()
         ).hexdigest()[:12]
+        self.contract_version = contract_version
+        self.detector_checkpoint = detector_checkpoint
+        self.split_hash: str | None = None
+        if split_config is not None:
+            self.split_hash = hashlib.sha256(
+                json.dumps(split_config, sort_keys=True).encode()
+            ).hexdigest()[:12]
         self._git_commit = self._get_git_commit()
         self._manifest: dict[str, Any] | None = None
 
@@ -99,7 +109,10 @@ class ExperimentRegistry:
                 "config_hash": self.config_hash,
                 "dataset": self.dataset,
                 "seed": self.seed,
-                "created_at": datetime.now(tz=UTC).isoformat(),
-                "software": self._get_software_versions(),
+                "split_hash": self.split_hash,
+                "contract_version": self.contract_version,
+                "detector_checkpoint": self.detector_checkpoint,
+                "created_at": datetime.now(tz=timezone.utc).isoformat(),
+                "software_versions": self._get_software_versions(),
             }
         return self._manifest

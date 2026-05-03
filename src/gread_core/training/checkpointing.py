@@ -17,7 +17,7 @@ import hashlib
 import json
 import logging
 import subprocess
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -43,10 +43,16 @@ class CheckpointManager:
         experiment_id: str,
         seed: int,
         config: dict[str, Any],
+        dataset: str | None = None,
+        detector_checkpoint_path: str | None = None,
+        contract_version: str | None = None,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.experiment_id = experiment_id
         self.seed = seed
+        self.dataset = dataset
+        self.detector_checkpoint_path = detector_checkpoint_path
+        self.contract_version = contract_version
         self.config_hash = hashlib.sha256(
             json.dumps(config, sort_keys=True).encode()
         ).hexdigest()[:12]
@@ -71,9 +77,10 @@ class CheckpointManager:
             "experiment_id": self.experiment_id,
             "git_commit": self._git_commit,
             "config_hash": self.config_hash,
+            "dataset": self.dataset,
             "seed": self.seed,
             "stage": stage,
-            "created_at": datetime.now(tz=UTC).isoformat(),
+            "created_at": datetime.now(tz=timezone.utc).isoformat(),
         }
 
     def save(
@@ -83,6 +90,8 @@ class CheckpointManager:
         epoch: int,
         optimizer: torch.optim.Optimizer | None = None,
         extra: dict[str, Any] | None = None,
+        detector_checkpoint_path: str | None = None,
+        contract_version: str | None = None,
     ) -> Path:
         """Save model checkpoint with metadata.
 
@@ -109,6 +118,12 @@ class CheckpointManager:
         # Save metadata
         metadata = self._build_metadata(stage)
         metadata["epoch"] = epoch
+        _det_ckpt = detector_checkpoint_path or self.detector_checkpoint_path
+        _contract = contract_version or self.contract_version
+        if _det_ckpt is not None:
+            metadata["detector_checkpoint_path"] = _det_ckpt
+        if _contract is not None:
+            metadata["contract_version"] = _contract
         if extra:
             metadata["extra"] = extra
 

@@ -63,17 +63,6 @@ def main(argv: list[str] | None = None) -> None:
 
     set_seed(args.seed)
 
-    # Create experiment registry
-    from gread_core.experiment.registry import ExperimentRegistry
-    registry = ExperimentRegistry(
-        experiment_id=args.experiment_id,
-        config=config,
-        config_path=args.config,
-        dataset=args.dataset,
-        seed=args.seed,
-        output_dir=args.output_dir,
-    )
-
     # Load dataset
     from gread_core.data.loaders import load_graph_dataset
     data = load_graph_dataset(args.dataset, seed=args.seed)
@@ -122,7 +111,10 @@ def main(argv: list[str] | None = None) -> None:
     no_mask_data = _strip_masks(data)
     with torch.no_grad():
         logits, embeddings = detector.forward_with_embedding(no_mask_data)  # type: ignore[operator]
-    adapter = PyGGNNAdapter(detector, data, logits, embeddings)
+    adapter_thresholds = config.get("adapter", {}).get("thresholds", {})
+    adapter = PyGGNNAdapter(
+        detector, data, logits, embeddings, thresholds=adapter_thresholds,
+    )
 
     # Create LLM client
     from gread_core.llm.clients import LLMClient
@@ -140,9 +132,60 @@ def main(argv: list[str] | None = None) -> None:
     from gread_core.llm.teacher import LLMTeacher
     from gread_core.verification.verifier import EvidenceContractVerifier
 
-    contract_config = config.get("verifier", {})
-    verifier = EvidenceContractVerifier(contract_config)
-    teacher = LLMTeacher(client, verifier, args.cache_dir)
+    # Load contract YAML — fail closed if missing
+    verifier_cfg = config.get("verifier", {})
+    contract_path = verifier_cfg.get("contract_path")
+    if contract_path:
+        contract_file = Path(contract_path)
+        if not contract_file.exists():
+            raise FileNotFoundError(
+                f"Contract YAML not found: {contract_path}"
+            )
+        with open(contract_file) as cf:
+            contract_yaml = yaml.safe_load(cf)
+        # Deep merge: YAML contract + config overrides
+        contract_config: dict = {}
+        contract_config.update(contract_yaml)
+        for key, val in verifier_cfg.items():
+            is_nested = (key in contract_config
+                         and isinstance(contract_config[key], dict)
+                         and isinstance(val, dict))
+            if is_nested:
+                contract_config[key] = {**contract_config[key], **val}
+            elif key == "label_compatibility" and isinstance(val, bool):
+                if isinstance(contract_config.get(key), dict):
+                    contract_config[key]["enabled"] = val
+                else:
+                    contract_config[key] = {"enabled": val}
+            else:
+                contract_config[key] = val
+    else:
+        raise ValueError(
+            "verifier.contract_path is required in config. "
+            "Set configs/contracts/gread_v1.yaml or an ablation contract."
+        )
+    # Inject contract_version into config for cache metadata downstream.
+    cv = contract_yaml.get("contract_version")
+    if cv:
+        config.setdefault("verifier", {})["contract_version"] = cv
+
+    # Create experiment registry (AFTER contract loading so contract_version is resolved)
+    from gread_core.experiment.registry import ExperimentRegistry
+    _cv = config.get("verifier", {}).get("contract_version")
+    registry = ExperimentRegistry(
+        experiment_id=args.experiment_id,
+        config=config,
+        config_path=args.config,
+        dataset=args.dataset,
+        seed=args.seed,
+        output_dir=args.output_dir,
+        contract_version=_cv,
+        detector_checkpoint=args.checkpoint,
+    )
+
+    score_blind = config.get("method", {}).get("score_blind", True)
+    verifier = EvidenceContractVerifier(contract_config, score_blind=score_blind)
+    teacher = LLMTeacher(client, verifier, args.cache_dir, score_blind=score_blind)
 
     # Generate ERRs
     from gread_core.training.stage2_generate_err import generate_errs

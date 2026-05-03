@@ -1,3 +1,5 @@
+contract_version: gread_v1
+
 risk_types:
   spectral_anomaly:
     required_any:

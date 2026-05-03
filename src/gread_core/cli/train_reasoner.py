@@ -47,6 +47,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--device", type=str, default="cpu", help="Device")
     parser.add_argument(
+        "--allow-empty-err", action="store_true",
+        help="Allow training with 0 accepted ERRs (testing only)",
+    )
+    parser.add_argument(
         "--tensorboard-dir", type=str, default=None,
         help="TensorBoard log dir (disabled if not set)",
     )
@@ -64,6 +68,19 @@ def main(argv: list[str] | None = None) -> None:
 
     set_seed(args.seed)
 
+    # Resolve contract_version from YAML if not already in config
+    _cv = config.get("verifier", {}).get("contract_version")
+    if _cv is None:
+        _contract_path = config.get("verifier", {}).get("contract_path")
+        if _contract_path:
+            _contract_file = Path(_contract_path)
+            if _contract_file.exists():
+                with open(_contract_file) as cf:
+                    _contract_yaml = yaml.safe_load(cf)
+                _cv = _contract_yaml.get("contract_version")
+                if _cv:
+                    config.setdefault("verifier", {})["contract_version"] = _cv
+
     # Create experiment registry
     from gread_core.experiment.registry import ExperimentRegistry
     registry = ExperimentRegistry(
@@ -73,6 +90,8 @@ def main(argv: list[str] | None = None) -> None:
         dataset=args.dataset,
         seed=args.seed,
         output_dir=args.output_dir,
+        contract_version=_cv,
+        detector_checkpoint=args.detector_checkpoint,
     )
 
     # Load dataset
@@ -125,6 +144,19 @@ def main(argv: list[str] | None = None) -> None:
         err_result.num_accepted, args.err_dir,
     )
 
+    if err_result.num_accepted == 0:
+        if args.allow_empty_err:
+            logger.warning(
+                "0 accepted ERRs loaded (--allow-empty-err set, testing only). "
+                "Training will proceed with zero reasoning signal."
+            )
+        else:
+            raise RuntimeError(
+                f"0 accepted ERRs loaded from {args.err_dir}. "
+                "Stage 3 requires at least 1 accepted ERR to train. "
+                "Use --allow-empty-err to override (testing only)."
+            )
+
     # Create reasoner
     from gread_core.models.evidence_encoder import EvidenceEncoder
     from gread_core.models.reasoner import GReaDReasoner
@@ -132,6 +164,12 @@ def main(argv: list[str] | None = None) -> None:
     num_risk_types = 6
     num_evidence_slots = config.get("evidence", {}).get("num_slots", 32)
     rho = config.get("method", {}).get("residual_rho", 0.1)
+    signed_evidence_masks = config.get("method", {}).get("signed_evidence_masks", True)
+
+    if rho == 0.0:
+        logger.info("ABLATION: residual_rho=0.0 — residual reasoning disabled")
+    if not signed_evidence_masks:
+        logger.info("ABLATION: signed_evidence_masks=False — using unsigned evidence head")
 
     evidence_encoder = EvidenceEncoder(
         vocab_size=num_evidence_slots + 10,
@@ -146,17 +184,22 @@ def main(argv: list[str] | None = None) -> None:
         num_risk_types=num_risk_types,
         num_evidence_slots=num_evidence_slots,
         rho=rho,
+        signed_evidence_masks=signed_evidence_masks,
     )
 
     # Train
     from gread_core.training.checkpointing import CheckpointManager
     from gread_core.training.stage3_train_reasoner import train_reasoner
 
+    contract_version = config.get("verifier", {}).get("contract_version")
     ckpt_manager = CheckpointManager(
         output_dir=args.output_dir,
         experiment_id=args.experiment_id,
         seed=args.seed,
         config=config,
+        dataset=args.dataset,
+        detector_checkpoint_path=args.detector_checkpoint,
+        contract_version=contract_version,
     )
 
     device = torch.device(args.device)
@@ -164,8 +207,8 @@ def main(argv: list[str] | None = None) -> None:
 
     writer = None
     if args.tensorboard_dir:
-        from torch.utils.tensorboard import SummaryWriter
-        writer = SummaryWriter(log_dir=args.tensorboard_dir)
+        from torch.utils.tensorboard import SummaryWriter  # type: ignore[attr-defined]
+        writer = SummaryWriter(log_dir=args.tensorboard_dir)  # type: ignore[no-untyped-call]
 
     train_reasoner(
         reasoner=reasoner,
@@ -179,7 +222,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     if writer is not None:
-        writer.close()
+        writer.close()  # type: ignore[no-untyped-call]
 
     manifest_path = registry.write_manifest()
     logger.info(
