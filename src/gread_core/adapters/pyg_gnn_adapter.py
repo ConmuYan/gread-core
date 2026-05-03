@@ -25,10 +25,9 @@ from gread_core.schemas.evidence import EvidenceStrength, MinimalEvidencePackage
 
 
 def _build_adj(edge_index: Tensor, n: int) -> Tensor:
-    """Build dense adjacency matrix from edge_index."""
-    adj = torch.zeros(n, n, dtype=torch.float32)
-    adj[edge_index[0], edge_index[1]] = 1.0
-    return adj
+    """Build sparse adjacency matrix from edge_index."""
+    values = torch.ones(edge_index.shape[1], dtype=torch.float32)
+    return torch.sparse_coo_tensor(edge_index, values, (n, n))
 
 
 def _embedding_cosine_distance(
@@ -51,22 +50,28 @@ def _embedding_cosine_distance(
     return cos_dist.mean().item()  # type: ignore[no-any-return]
 
 
-def _derive_signal(cos_dist: float) -> tuple[str, EvidenceStrength]:
+def _derive_signal(
+    cos_dist: float, thresholds: dict[str, float] | None = None,
+) -> tuple[str, EvidenceStrength]:
     """Map cosine distance to detector signal and strength."""
-    if cos_dist >= 0.4:
+    t = thresholds or {}
+    if cos_dist >= t.get("signal_strong", 0.4):
         return "embedding_neighbor_discrepancy_high", "strong"
-    if cos_dist >= 0.25:
+    if cos_dist >= t.get("signal_moderate", 0.25):
         return "message_disagreement_high", "moderate"
-    if cos_dist >= 0.10:
+    if cos_dist >= t.get("signal_weak", 0.10):
         return "attention_concentration_high", "weak"
     return "neutral", "weak"
 
 
-def _build_counter_signal(cos_dist: float) -> str:
+def _build_counter_signal(
+    cos_dist: float, thresholds: dict[str, float] | None = None,
+) -> str:
     """Build counter-evidence string from embedding analysis."""
-    if cos_dist < 0.1:
+    t = thresholds or {}
+    if cos_dist < t.get("counter_alignment", 0.1):
         return "embedding_neighbor_alignment"
-    if cos_dist < 0.25:
+    if cos_dist < t.get("counter_moderate", 0.25):
         return "moderate_embedding_alignment"
     return "low_embedding_alignment"
 
@@ -82,11 +87,13 @@ class PyGGNNAdapter(EvidenceAdapter):
         graph: Any,
         logits: Tensor,
         embeddings: Tensor | None = None,
+        thresholds: dict[str, float] | None = None,
     ) -> None:
         self._detector = detector
         self._graph = graph
         self._logits = logits
         self._embeddings = embeddings
+        self._thresholds = thresholds or {}
 
         edge_index = graph.edge_index
         x = graph.x
@@ -148,8 +155,8 @@ class PyGGNNAdapter(EvidenceAdapter):
             cos_dist = _embedding_cosine_distance(
                 emb[node_id], neighbor_embs  # type: ignore[index]
             )
-            detector_signal, strength = _derive_signal(cos_dist)
-            counter_signal = _build_counter_signal(cos_dist)
+            detector_signal, strength = _derive_signal(cos_dist, self._thresholds)
+            counter_signal = _build_counter_signal(cos_dist, self._thresholds)
         else:
             detector_signal = "unavailable"
             strength = "unavailable"

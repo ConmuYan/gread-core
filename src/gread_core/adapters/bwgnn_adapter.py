@@ -39,22 +39,28 @@ def _spectral_energy_ratio(embeddings: Tensor) -> float:
     return norms.var().item()  # type: ignore[no-any-return]
 
 
-def _derive_signal(ratio: float) -> tuple[str, EvidenceStrength]:
+def _derive_signal(
+    ratio: float, thresholds: dict[str, float] | None = None,
+) -> tuple[str, EvidenceStrength]:
     """Map spectral energy ratio to detector signal and strength."""
-    if ratio >= 0.6:
+    t = thresholds or {}
+    if ratio >= t.get("signal_strong", 0.6):
         return "high_frequency_response_high", "strong"
-    if ratio >= 0.3:
+    if ratio >= t.get("signal_moderate", 0.3):
         return "bandpass_response_high", "moderate"
-    if ratio >= 0.1:
+    if ratio >= t.get("signal_weak", 0.1):
         return "spectral_energy_shift_high", "weak"
     return "neutral", "weak"
 
 
-def _build_counter_signal(ratio: float) -> str:
+def _build_counter_signal(
+    ratio: float, thresholds: dict[str, float] | None = None,
+) -> str:
     """Build counter-evidence string from spectral analysis."""
-    if ratio < 0.3:
+    t = thresholds or {}
+    if ratio < t.get("counter_low", 0.3):
         return "low_spectral_energy_dominance"
-    if ratio < 0.5:
+    if ratio < t.get("counter_moderate", 0.5):
         return "moderate_spectral_energy_dominance"
     return "high_spectral_energy_dominance"
 
@@ -70,11 +76,13 @@ class BWGNNAdapter(EvidenceAdapter):
         graph: Any,
         logits: Tensor,
         spectral_responses: Tensor | None = None,
+        thresholds: dict[str, float] | None = None,
     ) -> None:
         self._detector = detector
         self._graph = graph
         self._logits = logits
         self._spectral_responses = spectral_responses
+        self._thresholds = thresholds or {}
 
         edge_index = graph.edge_index
         x = graph.x
@@ -119,8 +127,8 @@ class BWGNNAdapter(EvidenceAdapter):
         sr = self._spectral_responses
         if self.supports_detector_signal() and sr is not None and node_id < sr.shape[0]:
             ratio = _spectral_energy_ratio(sr[node_id])
-            detector_signal, strength = _derive_signal(ratio)
-            counter_signal = _build_counter_signal(ratio)
+            detector_signal, strength = _derive_signal(ratio, self._thresholds)
+            counter_signal = _build_counter_signal(ratio, self._thresholds)
         else:
             detector_signal = "unavailable"
             strength = "unavailable"

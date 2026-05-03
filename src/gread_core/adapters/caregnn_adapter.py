@@ -38,22 +38,28 @@ def _filter_disagreement(filter_weights: Tensor) -> float:
     return filter_weights.var().item()
 
 
-def _derive_signal(disagreement: float) -> tuple[str, EvidenceStrength]:
+def _derive_signal(
+    disagreement: float, thresholds: dict[str, float] | None = None,
+) -> tuple[str, EvidenceStrength]:
     """Map filter disagreement to detector signal and strength."""
-    if disagreement >= 0.25:
+    t = thresholds or {}
+    if disagreement >= t.get("signal_strong", 0.25):
         return "camouflage_neighbor_filter_high", "strong"
-    if disagreement >= 0.10:
+    if disagreement >= t.get("signal_moderate", 0.10):
         return "neighbor_selection_disagreement_high", "moderate"
-    if disagreement >= 0.02:
+    if disagreement >= t.get("signal_weak", 0.02):
         return "relation_aware_camouflage_signal", "weak"
     return "neutral", "weak"
 
 
-def _build_counter_signal(disagreement: float) -> str:
+def _build_counter_signal(
+    disagreement: float, thresholds: dict[str, float] | None = None,
+) -> str:
     """Build counter-evidence string from filter analysis."""
-    if disagreement < 0.05:
+    t = thresholds or {}
+    if disagreement < t.get("counter_consistent", 0.05):
         return "consistent_neighbor_selection"
-    if disagreement < 0.15:
+    if disagreement < t.get("counter_moderate", 0.15):
         return "moderate_neighbor_agreement"
     return "high_neighbor_agreement"
 
@@ -69,11 +75,13 @@ class CAREGNNAdapter(EvidenceAdapter):
         graph: Any,
         logits: Tensor,
         filter_weights: dict[int, Tensor] | None = None,
+        thresholds: dict[str, float] | None = None,
     ) -> None:
         self._detector = detector
         self._graph = graph
         self._logits = logits
         self._filter_weights = filter_weights
+        self._thresholds = thresholds or {}
 
         edge_index = graph.edge_index
         x = graph.x
@@ -117,8 +125,8 @@ class CAREGNNAdapter(EvidenceAdapter):
         fw = self._filter_weights
         if self.supports_detector_signal() and fw is not None and node_id in fw:
             disagreement = _filter_disagreement(fw[node_id])
-            detector_signal, strength = _derive_signal(disagreement)
-            counter_signal = _build_counter_signal(disagreement)
+            detector_signal, strength = _derive_signal(disagreement, self._thresholds)
+            counter_signal = _build_counter_signal(disagreement, self._thresholds)
         else:
             detector_signal = "unavailable"
             strength = "unavailable"

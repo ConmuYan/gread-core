@@ -31,20 +31,26 @@ def _build_adj(edge_index: Tensor, n: int) -> Tensor:
     return adj
 
 
-def _derive_signal(variance: float) -> tuple[str, EvidenceStrength]:
+def _derive_signal(
+    variance: float, thresholds: dict[str, float] | None = None,
+) -> tuple[str, EvidenceStrength]:
     """Map feature importance variance to detector signal and strength."""
-    if variance >= 0.05:
+    t = thresholds or {}
+    if variance >= t.get("signal_strong", 0.05):
         return "feature_importance_risk_high", "strong"
-    if variance >= 0.02:
+    if variance >= t.get("signal_moderate", 0.02):
         return "neighborhood_aggregation_discrepancy_high", "moderate"
     return "neutral", "weak"
 
 
-def _build_counter_signal(variance: float) -> str:
+def _build_counter_signal(
+    variance: float, thresholds: dict[str, float] | None = None,
+) -> str:
     """Build counter-evidence string from feature importance analysis."""
-    if variance < 0.01:
+    t = thresholds or {}
+    if variance < t.get("counter_uniform", 0.01):
         return "uniform_feature_importance"
-    if variance < 0.03:
+    if variance < t.get("counter_moderate", 0.03):
         return "moderate_feature_importance_spread"
     return "concentrated_feature_importance"
 
@@ -60,11 +66,13 @@ class TreeAdapter(EvidenceAdapter):
         graph: Any,
         logits: Tensor,
         feature_importance: Tensor | None = None,
+        thresholds: dict[str, float] | None = None,
     ) -> None:
         self._detector = detector
         self._graph = graph
         self._logits = logits
         self._feature_importance = feature_importance
+        self._thresholds = thresholds or {}
 
         edge_index = graph.edge_index
         x = graph.x
@@ -109,8 +117,8 @@ class TreeAdapter(EvidenceAdapter):
         if self.supports_detector_signal():
             assert self._feature_importance is not None
             variance = self._feature_importance.var().item()
-            detector_signal, strength = _derive_signal(variance)
-            counter_signal = _build_counter_signal(variance)
+            detector_signal, strength = _derive_signal(variance, self._thresholds)
+            counter_signal = _build_counter_signal(variance, self._thresholds)
         else:
             detector_signal = "unavailable"
             strength = "unavailable"

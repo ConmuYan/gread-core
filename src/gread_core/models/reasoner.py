@@ -15,6 +15,8 @@ Tensor shapes:
 
 from __future__ import annotations
 
+import logging
+
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -22,6 +24,8 @@ from torch import Tensor
 from gread_core.models.evidence_encoder import EvidenceEncoder
 from gread_core.models.heads import RiskTypeHead, SignedEvidenceHead
 from gread_core.models.residual_readout import EvidenceGatedResidualReadout
+
+logger = logging.getLogger(__name__)
 
 
 class GReaDReasoner(nn.Module):
@@ -41,6 +45,10 @@ class GReaDReasoner(nn.Module):
         num_risk_types: Number of risk type classes (T).
         num_evidence_slots: Number of evidence slots (K).
         rho: Residual scaling factor. Default 0.1.
+        signed_evidence_masks: When True (default, main method), uses
+            separate positive and negative evidence heads.  When False
+            (ablation), uses a single unsigned head whose output is
+            duplicated for both pos and neg mask logits.
     """
 
     def __init__(
@@ -50,17 +58,26 @@ class GReaDReasoner(nn.Module):
         num_risk_types: int,
         num_evidence_slots: int,
         rho: float = 0.1,
+        signed_evidence_masks: bool = True,
     ) -> None:
         super().__init__()
         self.evidence_encoder = evidence_encoder
         self.rho = rho
+        self._signed_evidence_masks = signed_evidence_masks
 
         evidence_dim = evidence_encoder.output_dim
         combined_dim = hidden_dim + evidence_dim
 
         self.type_head = RiskTypeHead(combined_dim, num_risk_types)
         self.signed_evidence_head = SignedEvidenceHead(combined_dim, num_evidence_slots)
+        if not signed_evidence_masks:
+            self._unsigned_evidence_head = nn.Linear(combined_dim, num_evidence_slots)
         self.residual_readout = EvidenceGatedResidualReadout(hidden_dim, evidence_dim)
+
+        if rho == 0.0:
+            logger.warning("ABLATION: rho=0.0 — residual reasoning disabled")
+        if not signed_evidence_masks:
+            logger.warning("ABLATION: signed_evidence_masks=False — using unsigned evidence head")
 
     def forward(
         self,
@@ -87,7 +104,13 @@ class GReaDReasoner(nn.Module):
         h = torch.cat([z_v, g_v], dim=-1)  # [B, H+E]
 
         type_logits = self.type_head(h)  # [B, T]
-        pos_mask_logits, neg_mask_logits = self.signed_evidence_head(h)  # [B, K], [B, K]
+        if self._signed_evidence_masks:
+            pos_mask_logits, neg_mask_logits = self.signed_evidence_head(h)  # [B, K], [B, K]
+        else:
+            # Ablation: single unsigned head, duplicated for pos/neg
+            unsigned_logits = self._unsigned_evidence_head(h)  # [B, K]
+            pos_mask_logits = unsigned_logits
+            neg_mask_logits = unsigned_logits
 
         residual_logit = self.residual_readout(
             z_v=z_v,
