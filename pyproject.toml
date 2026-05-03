@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gread-core"
 version = "0.1.0"
 description = "Contract-Verified Score-Blind Evidence Distillation for LLM-Free Graph Fraud Reasoning"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
@@ -27,14 +27,14 @@ ml = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -54,6 +54,30 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "torch.utils.tensorboard.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "numpy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "scipy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "dgl.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "torch_scatter.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "gread_core.evaluation.*"
+disable_error_code = ["type-arg"]
+
+[[tool.mypy.overrides]]
+module = "gread_core.cli.*"
+disable_error_code = ["type-arg", "unused-ignore"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

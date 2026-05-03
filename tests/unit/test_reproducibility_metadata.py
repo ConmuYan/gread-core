@@ -91,10 +91,13 @@ def test_registry_manifest_fields(tmp_path: Path) -> None:
         "dataset",
         "seed",
         "created_at",
-        "software",
+        "software_versions",
+        "split_hash",
+        "contract_version",
+        "detector_checkpoint",
     ]
     for field in required_fields:
         assert field in data, f"Missing required field: {field}"
 
-    assert "python" in data["software"]
-    assert "torch" in data["software"]
+    assert "python" in data["software_versions"]
+    assert "torch" in data["software_versions"]

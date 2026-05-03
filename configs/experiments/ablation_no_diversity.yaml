@@ -1,0 +1,78 @@
+# Ablation: no_diversity — disables evidence diversity in trace selection.
+# WARNING: trace selection without diversity sampling. Not main method.
+
+project:
+  name: gread-ablation-no-diversity
+  seed: 1
+  output_dir: artifacts/ablation_no_diversity
+
+detector:
+  hidden_channels: 32
+  type: gcn
+
+stage1:
+  epochs: 5
+  lr: 0.01
+  weight_decay: 0.0005
+  log_every: 1
+  save_every: 5
+
+stage2:
+  llm_backend: stub
+  cache_dir: .cache/llm_ablation
+  trace_budget: 10
+
+stage3:
+  epochs: 5
+  lr: 0.001
+  weight_decay: 0.00001
+  log_every: 1
+  save_every: 5
+
+method:
+  score_blind: true
+  lambda_reason: 0.5
+  residual_rho: 0.1
+  signed_evidence_masks: true
+
+paper_warning: "no_evidence_diversity_ablation"
+
+evidence:
+  num_slots: 16
+
+risk_taxonomy:
+  types:
+    - structural_discrepancy
+    - camouflage_neighbor
+    - spectral_anomaly
+    - feature_structure_conflict
+    - relation_or_burst_anomaly
+    - weak_or_uncertain_evidence
+
+trace_selection:
+  total_budget: 10
+  buckets:
+    uncertain: 0.333
+    high_conf_fraud: 0.333
+    high_conf_benign: 0.334
+  diversity_sampling: false
+  conflict_bucket:
+    enabled: false
+
+verifier:
+  contract_path: configs/contracts/gread_v1.yaml
+  label_compatibility: true
+
+experimental:
+  dhef:
+    enabled: false
+  cer_regularizer:
+    enabled: false
+  evidence_conflict_bucket:
+    enabled: false
+  adaptive_lambda:
+    enabled: false
+  prototype_prompting:
+    enabled: false
+  llm_self_consistency:
+    enabled: false
