@@ -2,6 +2,29 @@
 
 @AGENTS.md
 
+## Environment
+
+**Dedicated venv**: `/data1/mq/conda_envs/gread-core`
+**Python**: 3.10.20 | **CUDA**: 12.4 | **PyTorch**: 2.6.0+cu124
+
+All bash commands that run Python or pip MUST use the gread-core venv:
+```bash
+# Python
+/data1/mq/conda_envs/gread-core/bin/python ...
+# Pip
+/data1/mq/conda_envs/gread-core/bin/pip ...
+# Pytest
+/data1/mq/conda_envs/gread-core/bin/pytest ...
+```
+
+For CUDA library resolution, prefix with:
+```bash
+NVIDIA_BASE=/data1/mq/conda_envs/gread-core/lib/python3.10/site-packages/nvidia
+export LD_LIBRARY_PATH=$(find $NVIDIA_BASE -name "lib" -type d | tr '\n' ':')$LD_LIBRARY_PATH
+```
+
+Never use system python, conda base, or other environments for this project.
+
 ## Claude Code Specific Rules
 
 - Use Plan Mode before any task that touches more than one module.
