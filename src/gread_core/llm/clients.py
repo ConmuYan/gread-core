@@ -67,7 +67,7 @@ class StubClient:
     """
 
     _STUB_RESPONSE = json.dumps({
-        "risk_type": "weak_or_uncertain_evidence",
+        "risk_type": "structural_discrepancy",
         "supporting_evidence": ["degree_level", "neighbor_consistency"],
         "counter_evidence": ["counter_signal"],
         "summary": "Stub ERR for offline smoke testing.",

@@ -39,12 +39,37 @@ class PromptCache:
         """Return cached response or ``None``."""
         return self._index.get(_prompt_hash(prompt))
 
-    def put(self, prompt: str, response: str) -> None:
-        """Append a new entry and update the in-memory index."""
+    def put(
+        self,
+        prompt: str,
+        response: str,
+        *,
+        payload_hash: str | None = None,
+        model: str | None = None,
+        verification_result: str | None = None,
+        contract_version: str | None = None,
+    ) -> None:
+        """Append a new entry and update the in-memory index.
+
+        If the key already exists *and* new metadata is provided, appends an
+        enriched entry so the JSONL captures verification context.
+        """
         key = _prompt_hash(prompt)
-        if key in self._index:
+        has_metadata = any(
+            v is not None
+            for v in (payload_hash, model, verification_result, contract_version)
+        )
+        if key in self._index and not has_metadata:
             return
-        entry = {"prompt_hash": key, "response": response}
+        entry: dict[str, str] = {"prompt_hash": key, "response": response}
+        if payload_hash is not None:
+            entry["payload_hash"] = payload_hash
+        if model is not None:
+            entry["model"] = model
+        if verification_result is not None:
+            entry["verification_result"] = verification_result
+        if contract_version is not None:
+            entry["contract_version"] = contract_version
         with self._path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         self._index[key] = response

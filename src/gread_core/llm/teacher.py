@@ -35,16 +35,23 @@ class LLMTeacher:
         client: LLMClient,
         verifier: EvidenceContractVerifier,
         cache_dir: str,
+        score_blind: bool = True,
     ) -> None:
         self._client = client
         self._verifier = verifier
         self._cache = PromptCache(cache_dir)
-        self._builder = PromptBuilder()
+        self._builder = PromptBuilder(score_blind=score_blind)
+        if not score_blind:
+            logger.warning(
+                "ABLATION: score_blind=False — prediction_score will leak into prompts"
+            )
 
     def generate_err(
         self,
         meps: list[MinimalEvidencePackage],
         labels: list[int] | None = None,
+        *,
+        contract_version: str | None = None,
     ) -> list[ErrGenerationResult]:
         """Generate accepted ERRs for *meps*.
 
@@ -56,12 +63,24 @@ class LLMTeacher:
             payload = mep.to_teacher_payload()
             prompt = self._builder.build(payload)
 
-            raw = self._get_completion(prompt)
+            raw = self._cache.get(prompt)
+            if raw is None:
+                raw = self._client.complete(prompt)
             err = self._parse_with_retry(prompt, raw)
             if err is None:
                 continue
 
             verification = self._verifier.verify(err, mep, label)
+
+            # Cache with verification metadata (may overwrite bare response).
+            ver_str = "accepted" if verification.accepted else "rejected"
+            self._cache.put(
+                prompt,
+                raw,
+                verification_result=ver_str,
+                contract_version=contract_version,
+            )
+
             if verification.accepted:
                 logger.info(
                     "ERR accepted for node=%s reasons=%s",
@@ -86,15 +105,6 @@ class LLMTeacher:
     # ------------------------------------------------------------------
     # internal helpers
     # ------------------------------------------------------------------
-
-    def _get_completion(self, prompt: str) -> str:
-        cached = self._cache.get(prompt)
-        if cached is not None:
-            logger.debug("Cache hit for prompt")
-            return cached
-        response = self._client.complete(prompt)
-        self._cache.put(prompt, response)
-        return response
 
     def _parse_with_retry(
         self, prompt: str, raw: str
