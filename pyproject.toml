@@ -48,6 +48,14 @@ module = "torch_geometric.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "torch.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "jinja2.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "openai"
 ignore_missing_imports = true
 
