@@ -6,8 +6,9 @@ Epic: 13 - Research Alignment Audit Fixes (COMPLETE)
 Epic: 13b - Codex Review Round 2 Fixes (COMPLETE)
 Epic: 13c - Ultrawork — Remaining P1/P2 Fixes (COMPLETE)
 Epic: 13d - Codex Re-Review Final Fixes (COMPLETE)
+Epic: 13e - Formal Experiment Routing (COMPLETE)
 Branch: master
-Last updated: 2026-05-03
+Last updated: 2026-05-04
 
 ## Completed
 
@@ -144,17 +145,28 @@ Last updated: 2026-05-03
 - 3 regression test files added (11 tests): cache enriched entry, inference canonical slots, ERR lookup global index
 - All validation gates pass: ruff, mypy (77 files), unit (340), paper alignment, no-leakage, no-LLM
 
+### Epic 13e: Formal Experiment Routing
+- Data root routing added: CLI `--data-root` > config `data.root`/`data.data_root` > `GREAD_DATA_ROOT` > `data/raw`
+- Project-local `data/raw` symlink points to the existing PriorF-GNN dataset directory; `data/` is ignored, so the 4.9G datasets are not copied or tracked
+- Stage 2 runtime now resolves backend/cache/model/temperature from config with CLI overrides; non-tiny datasets reject `stub`
+- Formal scripts (`run_main_table`, `run_validation`, `run_full_experiments`, `run_ablations`) use configurable `LLM_BACKEND` and pass real evaluation args
+- Evaluation now fails closed unless real dataset/detector/checkpoint/ERR args are provided, with `--synthetic` required for legacy synthetic mode
+- Detector-specific adapter factory added; formal runs fail closed if detector-native evidence is unavailable
+- Exporter now only includes `evaluation_mode=real` results with non-placeholder dataset/detector metadata
+- Regression coverage added in `tests/unit/test_formal_experiment_routing.py`
+
 ## Validation Results
 
-- 340 tests passing (unit + paper alignment)
+- 350 tests passing (344 unit + 6 paper alignment)
 - ruff check: all passed
-- mypy src: 77 source files, no issues
+- mypy src: 78 source files, no issues
 - check_no_leakage.py: passed
 - check_no_llm_inference.py: passed
-- 77 source files, 36 test files
-- Smoke pipeline: Stage 1/2/3 all pass; 2 accepted ERRs; contract_version="gread_v1" in manifest; stage3 checkpoint exists
+- 78 source files, 37 test files
+- Smoke pipeline: Stage 1/2/3/evaluate all pass; 2 accepted ERRs; evaluate uses real tiny args instead of legacy synthetic mode
 - YelpChi real pipeline: all 3 stages + evaluation passed
 - TensorBoard: 8 metrics logged per run
+- Formal routing regression: `tests/unit/test_formal_experiment_routing.py` passes
 
 ## Research Constraints Reconfirmed
 
@@ -176,6 +188,7 @@ Last updated: 2026-05-03
 ## Next
 
 - Add missing ablation configs (A1-A11 full matrix — currently 5 of 11)
+- Regenerate non-tiny Stage 2 ERRs with `LLM_BACKEND=openai`, then replay from enriched cache
 - Run full-scale experiments on tfinance + tsocial datasets
 - Generate final main table with real metrics
 - Prepare paper-ready results and figures

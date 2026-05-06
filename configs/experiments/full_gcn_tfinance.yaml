@@ -1,7 +1,7 @@
-# Small-scale validation: GCN on T-Finance (10 epochs).
+# Full experiment: GCN on T-Finance.
 
 project:
-  name: gread-core-val-gcn-tfinance
+  name: gread-core-full-gcn-tfinance
   seed: 1
   output_dir: artifacts/full_gcn_tfinance
 
@@ -18,7 +18,7 @@ stage1:
 
 stage2:
   llm_backend: replay
-  cache_dir: .cache/llm_full_tfinance
+  cache_dir: .cache/llm_full_gcn_tfinance
   trace_budget: 100
 
 stage3:

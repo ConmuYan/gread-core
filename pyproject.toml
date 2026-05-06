@@ -24,6 +24,17 @@ ml = [
     "torch>=2.0",
     "torch-geometric>=2.4",
     "tensorboard>=2.14",
+    "scipy>=1.10",
+    "Pillow>=10.0",
+]
+llm = [
+    "openai>=1.0",
+]
+llm_local = [
+    "accelerate>=0.31.0",
+    "transformers>=4.51.0",
+    "safetensors>=0.4.0",
+    "tqdm>=4.66.0",
 ]
 
 [tool.ruff]
@@ -65,6 +76,14 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "torch.utils.tensorboard.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "transformers.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tqdm.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -110,4 +129,11 @@ disable_error_code = ["no-any-return"]
 testpaths = ["tests"]
 markers = [
     "paper_alignment: Tests enforcing paper-design invariants",
+]
+filterwarnings = [
+    "ignore:`torch_geometric.distributed` has been deprecated.*:DeprecationWarning",
+    "ignore:`torch.jit.script` is deprecated.*:DeprecationWarning",
+    "ignore:Failing to pass a value to the 'type_params' parameter.*:DeprecationWarning",
+    "ignore:Sparse invariant checks are implicitly disabled.*:UserWarning",
+    "ignore:Sparse CSR tensor support is in beta state.*:UserWarning",
 ]

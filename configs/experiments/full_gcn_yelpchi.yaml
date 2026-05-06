@@ -1,8 +1,7 @@
-# Small-scale validation: GCN on YelpChi (10 epochs).
-# Used to verify pipeline end-to-end before full experiments.
+# Full experiment: GCN on YelpChi.
 
 project:
-  name: gread-core-val-gcn-yelpchi
+  name: gread-core-full-gcn-yelpchi
   seed: 1
   output_dir: artifacts/full_gcn_yelpchi
 
@@ -19,7 +18,7 @@ stage1:
 
 stage2:
   llm_backend: replay
-  cache_dir: .cache/llm_full_yelpchi
+  cache_dir: .cache/llm_full_gcn_yelpchi
   trace_budget: 100
 
 stage3:

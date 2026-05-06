@@ -65,6 +65,7 @@ class TreeNeighborDetector(nn.Module):
             nn.Dropout(p=dropout),
             nn.Linear(hidden_channels, 1),
         )
+        self.feature_importance: Tensor | None = None
 
     def forward_with_embedding(self, graph: Data) -> tuple[Tensor, Tensor]:
         """Forward pass returning (base_logit[B], node_embedding[N, H*2]).
@@ -93,6 +94,7 @@ class TreeNeighborDetector(nn.Module):
 
         # Concatenate self + neighbor: [N, hidden*2]
         full_embedding = torch.cat([self_feat, neigh_feat], dim=-1)
+        self.feature_importance = (self_feat - neigh_feat).abs().detach()
 
         # Select target nodes for logits only
         target_mask = self._get_target_mask(graph)

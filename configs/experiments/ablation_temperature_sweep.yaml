@@ -1,0 +1,55 @@
+# Ablation: temperature sweep (G1 - ERR generation temperature sweep).
+# Sweeps LLM sampling temperature in {0.0, 0.3, 0.7}.
+# Goal: show how ERR generation determinism vs. diversity trades off with
+# downstream reasoning metrics. Verifier and contract held fixed.
+
+project:
+  name: gread-core-ablation-temperature-sweep
+  seed: 1
+  output_dir: artifacts/ablation_temperature_sweep
+
+paper_warning: "temperature_sweep_ablation"
+
+detector:
+  type: gcn
+  hidden_channels: 64
+  num_layers: 2
+  dropout: 0.5
+  lr: 0.01
+  weight_decay: 5.0e-4
+  num_epochs: 50
+
+llm:
+  backend: openai
+  cache_dir: .cache/llm_ablation
+  model: gpt-4o-mini
+  temperature: 0.0  # base; sweep performed by aggregator
+  temperature_sweep: [0.0, 0.3, 0.7]
+
+contract_path: configs/contracts/gread_v1.yaml
+
+verifier:
+  contract_path: configs/contracts/gread_v1.yaml
+  rho: 0.5
+
+reasoner:
+  signed_masks: true
+  num_slots: 8
+  hidden_dim: 64
+  dropout: 0.3
+
+prompt:
+  score_blind: true
+
+data:
+  dataset: yelpchi
+  data_root: data/raw
+  split:
+    train_ratio: 0.4
+    val_ratio: 0.1
+    test_ratio: 0.5
+    seed: 42
+
+evaluation:
+  metrics: [auc, auprc, f1]
+  num_seeds: 3

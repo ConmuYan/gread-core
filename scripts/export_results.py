@@ -28,8 +28,12 @@ REASONING_KEYS = ("acceptance_rate", "evidence_f1", "risk_type_accuracy")
 
 
 def _find_result_files() -> list[Path]:
-    """Discover all evaluation_results.json under artifacts/*/metrics/."""
-    return sorted(ARTIFACTS_DIR.glob("*/metrics/evaluation_results.json"))
+    """Discover publishable evaluation result files."""
+    return sorted(
+        path
+        for path in ARTIFACTS_DIR.glob("*/*/evaluation_results.json")
+        if path.parent.name == "metrics" or path.parent.name.startswith("real_metrics")
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -85,6 +89,28 @@ def _infer_experiment_info(experiment_dir_name: str) -> dict[str, str]:
     return info
 
 
+def _result_context(result_path: Path, data: dict[str, Any]) -> dict[str, str]:
+    """Read experiment/dataset/detector context from result metadata first."""
+    experiment_dir = result_path.parent.parent
+    info = _infer_experiment_info(experiment_dir.name)
+    dataset = data.get("dataset") or info.get("dataset", "unknown")
+    detector = data.get("detector") or info.get("detector", "unknown")
+    info["dataset"] = str(dataset)
+    info["detector"] = str(detector)
+    return info
+
+
+def _is_publishable_real_result(data: dict[str, Any], info: dict[str, str]) -> bool:
+    """Return True when a result is real and has non-placeholder routing metadata."""
+    dataset = info.get("dataset", "unknown")
+    detector = info.get("detector", "unknown")
+    return (
+        data.get("evaluation_mode") == "real"
+        and dataset not in {"", "unknown", "synthetic"}
+        and detector not in {"", "unknown", "synthetic"}
+    )
+
+
 def _try_read_config_warning(experiment_dir: Path) -> str:
     """Try to read paper_warning from the corresponding YAML config."""
     # The config is typically at configs/experiments/<experiment_dir_name>.yaml
@@ -107,11 +133,12 @@ def build_main_table(results: list[tuple[Path, dict[str, Any]]]) -> list[dict[st
     """Build rows for the main results table."""
     rows: list[dict[str, str]] = []
     for result_path, data in results:
-        experiment_dir = result_path.parent.parent  # artifacts/<name>/metrics/ -> <name>
-        info = _infer_experiment_info(experiment_dir.name)
+        info = _result_context(result_path, data)
 
         # Skip ablation experiments in the main table
         if info["is_ablation"] == "true":
+            continue
+        if not _is_publishable_real_result(data, info):
             continue
 
         row: dict[str, str] = {
@@ -134,10 +161,12 @@ def build_ablation_table(results: list[tuple[Path, dict[str, Any]]]) -> list[dic
     rows: list[dict[str, str]] = []
     for result_path, data in results:
         experiment_dir = result_path.parent.parent
-        info = _infer_experiment_info(experiment_dir.name)
+        info = _result_context(result_path, data)
 
         # Only include ablation experiments
         if info["is_ablation"] != "true":
+            continue
+        if not _is_publishable_real_result(data, info):
             continue
 
         # Try to get paper_warning from config file first, fall back to inferred

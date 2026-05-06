@@ -107,3 +107,14 @@ def test_prompt_contains_node_id(
     payload = sample_mep.to_teacher_payload()
     prompt = builder.build(payload)
     assert "n1" in prompt
+
+
+def test_prompt_contains_compact_ontology_guidance(
+    builder: PromptBuilder, sample_mep: MinimalEvidencePackage
+) -> None:
+    payload = sample_mep.to_teacher_payload()
+    prompt = builder.build(payload)
+    assert "uncertainty_level can support only weak_or_uncertain_evidence" in prompt
+    assert "spectral_anomaly needs cited detector_signal" in prompt
+    assert "prediction_score" not in prompt
+    assert '"label"' not in prompt

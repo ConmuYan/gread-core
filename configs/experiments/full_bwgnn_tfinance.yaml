@@ -1,7 +1,7 @@
-# Small-scale validation: BWGNN on T-Finance (10 epochs).
+# Full experiment: BWGNN on T-Finance.
 
 project:
-  name: gread-core-val-bwgnn-tfinance
+  name: gread-core-full-bwgnn-tfinance
   seed: 1
   output_dir: artifacts/full_bwgnn_tfinance
 

@@ -10,7 +10,7 @@ Research constraints:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -45,6 +45,7 @@ class CARELayer(nn.Module):
             [nn.Linear(in_channels * 2, 1) for _ in range(num_relations)]
         )
         self.attn = nn.Linear(out_channels, 1)
+        self.last_filter_weights: dict[int, Tensor] = {}
 
     def forward(
         self, x: Tensor, edge_index: Tensor, edge_type: Tensor | None = None
@@ -69,6 +70,7 @@ class CARELayer(nn.Module):
             edge_type = torch.zeros(row.size(0), dtype=torch.long, device=x.device)
 
         agg: Tensor = torch.zeros(num_nodes, out_channels, device=x.device)
+        node_weights: dict[int, list[Tensor]] = {}
 
         for r in range(self.num_relations):
             mask = edge_type == r
@@ -84,6 +86,9 @@ class CARELayer(nn.Module):
             # Similarity scoring
             pair = torch.cat([x[r_row], x[r_col]], dim=-1)
             sim_score = torch.sigmoid(self.sim_linear[r](pair)).squeeze(-1)
+            for nid in r_row.unique():
+                nid_int = int(nid.item())
+                node_weights.setdefault(nid_int, []).append(sim_score[r_row == nid].detach())
 
             # Filter by threshold: keep neighbors above similarity threshold
             weight = (sim_score >= self.sim_threshold).float()
@@ -95,6 +100,9 @@ class CARELayer(nn.Module):
 
             agg.scatter_add_(0, r_row.unsqueeze(-1).expand_as(weighted), weighted)
 
+        self.last_filter_weights = {
+            node_id: torch.cat(values) for node_id, values in node_weights.items()
+        }
         return agg
 
 
@@ -128,6 +136,7 @@ class CAREGNNDetector(nn.Module):
 
         self.dropout = dropout
         self.layers = nn.ModuleList()
+        self.filter_weights: dict[int, Tensor] = {}
 
         # First layer
         self.layers.append(
@@ -154,10 +163,20 @@ class CAREGNNDetector(nn.Module):
         edge_index: Tensor = graph.edge_index
 
         # CARE message passing — produces embeddings for all N nodes
-        for layer in self.layers:
+        for module in self.layers:
+            layer = cast(CARELayer, module)
             x = layer(x, edge_index, edge_type)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
+
+        collected: dict[int, list[Tensor]] = {}
+        for module in self.layers:
+            layer = cast(CARELayer, module)
+            for node_id, values in layer.last_filter_weights.items():
+                collected.setdefault(node_id, []).append(values)
+        self.filter_weights = {
+            node_id: torch.cat(values) for node_id, values in collected.items()
+        }
 
         # Full embeddings: [N, hidden]
         full_embedding = x

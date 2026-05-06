@@ -18,6 +18,18 @@ CONFIG="${1:?Usage: bash scripts/run_main_table.sh <config> [dataset] [detector]
 DATASET="${2:-tiny}"
 DETECTOR="${3:-gcn}"
 SEED="${4:-1}"
+DATA_ROOT="${GREAD_DATA_ROOT:-data/raw}"
+if [ -z "${LLM_BACKEND:-}" ]; then
+    if [ "$DATASET" = "tiny" ]; then
+        LLM_BACKEND="stub"
+    else
+        LLM_BACKEND="replay"
+    fi
+fi
+if [ "$DATASET" != "tiny" ] && [ "$LLM_BACKEND" = "stub" ]; then
+    echo "ERROR: LLM_BACKEND=stub is only allowed for tiny/smoke runs, not ${DATASET}."
+    exit 1
+fi
 
 # Derive experiment id from config filename (strip path and extension)
 EXPERIMENT_ID="$(basename "$CONFIG" .yaml)"
@@ -47,7 +59,8 @@ python -m gread_core.cli.train_detector \
     --detector "$DETECTOR" \
     --output-dir "$OUTPUT_DIR" \
     --experiment-id "$EXPERIMENT_ID" \
-    --seed "$SEED"
+    --seed "$SEED" \
+    --data-root "$DATA_ROOT"
 
 # Find the latest stage1 checkpoint
 STAGE1_CKPT=$(ls -d "$OUTPUT_DIR"/stage1/epoch_* 2>/dev/null | sort | tail -1)
@@ -57,9 +70,9 @@ if [ -z "$STAGE1_CKPT" ]; then
 fi
 echo "  -> Stage 1 checkpoint: $STAGE1_CKPT"
 
-# ── Step 3: Stage 2 — Generate ERRs (stub mode) ─────────────────────
+# ── Step 3: Stage 2 — Generate ERRs ─────────────────────────────────
 echo ""
-echo "[4/6] Stage 2: Generate ERRs (stub mode)..."
+echo "[4/6] Stage 2: Generate ERRs (${LLM_BACKEND} mode)..."
 python -m gread_core.cli.generate_err \
     --config "$CONFIG" \
     --dataset "$DATASET" \
@@ -68,7 +81,8 @@ python -m gread_core.cli.generate_err \
     --output-dir "$OUTPUT_DIR" \
     --experiment-id "$EXPERIMENT_ID" \
     --seed "$SEED" \
-    --llm-backend stub \
+    --data-root "$DATA_ROOT" \
+    --llm-backend "$LLM_BACKEND" \
     --cache-dir ".cache/llm_${EXPERIMENT_ID}"
 
 # ── Step 4: Stage 3 — Train reasoner ────────────────────────────────
@@ -82,7 +96,8 @@ python -m gread_core.cli.train_reasoner \
     --err-dir "$OUTPUT_DIR/stage2" \
     --output-dir "$OUTPUT_DIR" \
     --experiment-id "$EXPERIMENT_ID" \
-    --seed "$SEED"
+    --seed "$SEED" \
+    --data-root "$DATA_ROOT"
 
 # Find the latest stage3 checkpoint
 STAGE3_CKPT=$(ls -d "$OUTPUT_DIR"/stage3/epoch_* 2>/dev/null | sort | tail -1)
@@ -98,8 +113,13 @@ echo "[6/6] Evaluation..."
 python -m gread_core.cli.evaluate \
     --checkpoint "$STAGE3_CKPT" \
     --config "$CONFIG" \
+    --dataset "$DATASET" \
+    --detector "$DETECTOR" \
+    --detector-checkpoint "$STAGE1_CKPT" \
+    --err-dir "$OUTPUT_DIR/stage2" \
     --output "$OUTPUT_DIR/metrics" \
-    --seed "$SEED"
+    --seed "$SEED" \
+    --data-root "$DATA_ROOT"
 
 echo ""
 echo "=== Pipeline complete ==="

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from typing import Any
 
 import pytest
 
@@ -184,7 +185,7 @@ class TestDiversitySample:
 # ---------------------------------------------------------------------------
 
 class TestTraceSelector:
-    def _make_config(self, budget: int = 100) -> dict:
+    def _make_config(self, budget: int = 100) -> dict[str, Any]:
         return {
             "trace_selection": {
                 "total_budget": budget,
@@ -275,3 +276,84 @@ class TestTraceSelector:
         result = selector.select(scores, uncertainties, None, meps)
         # All should be uncertain
         assert all(bl == "uncertain" for bl in result.bucket_labels)
+
+    def test_fixed_policy_preserves_original_bucket_budget_behavior(self) -> None:
+        selector = TraceSelector(self._make_config(9), seed=42)
+        scores = torch.full((20,), 0.5)
+        uncertainties = torch.full((20,), 0.9)
+        meps = [_make_mep(i) for i in range(20)]
+
+        result = selector.select(scores, uncertainties, None, meps)
+
+        assert len(result.node_ids) == 2
+        assert result.bucket_labels == ["uncertain", "uncertain"]
+        assert result.metadata["bucket_policy"] == "fixed"
+        assert result.metadata["reallocated_budget"] == 0
+
+    def test_percentile_policy_fills_fraud_bucket_when_fixed_threshold_would_not(
+        self,
+    ) -> None:
+        config = self._make_config(6)
+        config["trace_selection"]["bucket_policy"] = {
+            "mode": "percentile",
+            "uncertain_fraction": 0.0,
+            "high_conf_fraction": 0.5,
+            "low_uncertainty_fraction": 1.0,
+        }
+        selector = TraceSelector(config, seed=42)
+        scores = torch.tensor([0.61, 0.63, 0.66, 0.21, 0.24, 0.28])
+        uncertainties = torch.tensor([0.11, 0.12, 0.13, 0.14, 0.15, 0.16])
+        labels = torch.tensor([1, 1, 1, 0, 0, 0])
+        meps = [_make_mep(i) for i in range(6)]
+
+        result = selector.select(scores, uncertainties, labels, meps)
+
+        assert "high_conf_fraud" in result.bucket_labels
+        assert result.metadata["bucket_policy"] == "percentile"
+        assert result.metadata["eligible_counts"]["high_conf_fraud"] > 0
+
+    def test_fallback_budget_reallocation_uses_remaining_bucket_candidates(
+        self,
+    ) -> None:
+        config = self._make_config(9)
+        config["trace_selection"]["fallback_budget_reallocation"] = True
+        selector = TraceSelector(config, seed=42)
+        scores = torch.full((20,), 0.5)
+        uncertainties = torch.full((20,), 0.9)
+        meps = [_make_mep(i) for i in range(20)]
+
+        result = selector.select(scores, uncertainties, None, meps)
+
+        assert len(result.node_ids) == 9
+        assert result.bucket_labels == ["uncertain"] * 9
+        assert result.metadata["reallocated_budget"] == 7
+        assert result.metadata["reallocated_to"]["uncertain"] == 7
+        assert "prediction_score" not in result.metadata
+
+    def test_uses_precomputed_bucket_assignments(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        selector = TraceSelector(self._make_config(9), seed=42)
+        scores = torch.tensor([0.9, 0.1, 0.5])
+        uncertainties = torch.tensor([0.1, 0.1, 0.9])
+        labels = torch.tensor([1, 0, 0])
+        meps = [_make_mep(i) for i in range(3)]
+
+        def _fail(*args: object, **kwargs: object) -> list[str | None]:
+            raise AssertionError("assign_buckets should not be called")
+
+        monkeypatch.setattr("gread_core.tracing.selector.assign_buckets", _fail)
+
+        result = selector.select(
+            scores,
+            uncertainties,
+            labels,
+            meps,
+            bucket_assignments=["high_conf_fraud", "high_conf_benign", "uncertain"],
+        )
+
+        assert set(result.bucket_labels) == {
+            "high_conf_fraud",
+            "high_conf_benign",
+            "uncertain",
+        }

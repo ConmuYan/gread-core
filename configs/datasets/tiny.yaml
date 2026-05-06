@@ -1,3 +1,4 @@
 dataset: tiny
 seed: 1
 num_nodes: 50
+data_root: data/raw

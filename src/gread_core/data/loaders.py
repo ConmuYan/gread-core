@@ -9,6 +9,8 @@ All loaders return PyG Data objects with:
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -17,6 +19,9 @@ try:
     from torch_geometric.data import Data
 except ImportError:
     Data = Any
+
+_DEFAULT_DATA_ROOT = Path("data/raw")
+_DATA_ROOT_ENV = "GREAD_DATA_ROOT"
 
 
 def load_tiny_graph(
@@ -132,11 +137,48 @@ def load_synthetic_graph(
     )
 
 
+def resolve_data_root(
+    cli_data_root: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+) -> Path:
+    """Resolve the real dataset root.
+
+    Priority: explicit CLI/root argument > config ``data.root``/``data.data_root``
+    > ``GREAD_DATA_ROOT`` > project-local ``data/raw`` symlink.
+    """
+    if cli_data_root:
+        return Path(cli_data_root).expanduser()
+
+    data_cfg = config.get("data", {}) if config is not None else {}
+    if isinstance(data_cfg, dict):
+        configured_root = data_cfg.get("root") or data_cfg.get("data_root")
+        if configured_root:
+            return Path(str(configured_root)).expanduser()
+
+    env_root = os.environ.get(_DATA_ROOT_ENV)
+    if env_root:
+        return Path(env_root).expanduser()
+
+    return _DEFAULT_DATA_ROOT
+
+
+def _resolve_split_options(
+    config: dict[str, Any] | None = None,
+) -> tuple[tuple[float, float, float], bool]:
+    split_cfg = (config or {}).get("data", {}).get("split", {})
+    ratios_raw = split_cfg.get("ratios", [0.7, 0.15, 0.15])
+    ratios = tuple(float(v) for v in ratios_raw)
+    if len(ratios) != 3:
+        raise ValueError("data.split.ratios must contain exactly 3 values")
+    return (ratios[0], ratios[1], ratios[2]), bool(split_cfg.get("stratified", False))
+
+
 def load_graph_dataset(
     name: str,
-    root: str = "data",
+    root: str | Path | None = None,
     seed: int = 1,
     allow_synthetic_fallback: bool = False,
+    config: dict[str, Any] | None = None,
 ) -> Data:
     """Load a graph fraud detection dataset by name.
 
@@ -152,11 +194,12 @@ def load_graph_dataset(
 
     Args:
         name: Dataset name.
-        root: Root directory for dataset storage.
+        root: Root directory for real dataset storage. Overrides config/env.
         seed: Random seed for mask generation.
         allow_synthetic_fallback: If True, fall back to synthetic data when
             real dataset is unavailable. If False (default), raise an error
             for real dataset names that cannot be loaded.
+        config: Optional config dict with ``data.root`` or ``data.data_root``.
 
     Returns a PyG Data object with train/val/test masks.
     """
@@ -179,16 +222,28 @@ def load_graph_dataset(
     if name in ("yelpchi", "amazon", "tfinance", "tsocial"):
         import logging
         logger = logging.getLogger(__name__)
+        data_root = resolve_data_root(cli_data_root=root, config=config)
 
-        # Try loading real dataset from PriorF-GNN datasets
-        real_loaders = {
+        # Try loading real dataset from configured/local dataset root
+        real_loaders: dict[str, Any] = {
             "yelpchi": load_real_yelpchi,
             "amazon": load_real_amazon,
             "tfinance": load_real_tfinance,
             "tsocial": load_real_tsocial,
         }
         try:
-            return real_loaders[name](seed=seed)
+            ratios, stratified = _resolve_split_options(config)
+            try:
+                return real_loaders[name](
+                    data_root=data_root,
+                    seed=seed,
+                    ratios=ratios,
+                    stratified=stratified,
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument" not in str(exc):
+                    raise
+                return real_loaders[name](data_root=data_root, seed=seed)
         except (FileNotFoundError, ImportError, Exception) as e:
             logger.warning("Real dataset '%s' not available: %s", name, e)
 
@@ -196,10 +251,16 @@ def load_graph_dataset(
         try:
             from torch_geometric.datasets import FraudDataset
 
-            dataset = FraudDataset(root=root, name=name)
+            dataset = FraudDataset(root=str(data_root), name=name)
             data = dataset[0]
             if not hasattr(data, "train_mask") or data.train_mask is None:
-                data = _generate_masks(data, seed=seed)
+                ratios, stratified = _resolve_split_options(config)
+                data = _generate_masks(
+                    data,
+                    seed=seed,
+                    ratios=ratios,
+                    stratified=stratified,
+                )
             return data
         except (ImportError, Exception) as e:
             logger.warning("FraudDataset not available for '%s': %s", name, e)
@@ -240,19 +301,25 @@ def _generate_masks(
     data: Data,
     seed: int = 1,
     ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
+    stratified: bool = False,
 ) -> Data:
     """Generate train/val/test masks for a graph dataset.
 
-    Thin wrapper around gread_core.data.splits.generate_masks.
+    Thin wrapper around gread_core.data.splits.
     """
     from gread_core.data.splits import generate_masks as gen_masks
+    from gread_core.data.splits import stratified_split
 
+    if stratified and hasattr(data, "y") and data.y is not None:
+        return stratified_split(data, seed=seed, ratios=ratios)
     return gen_masks(data, seed=seed, ratios=ratios)
 
 
 def load_real_yelpchi(
-    data_root: str = "/data1/mq/codes/awesome-graph-anomaly-detection/PriorF-GNN/datasets",
+    data_root: str | Path | None = None,
     seed: int = 1,
+    ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
+    stratified: bool = False,
 ) -> Data:
     """Load real YelpChi dataset from .mat file.
 
@@ -264,13 +331,13 @@ def load_real_yelpchi(
         PyG Data object with features, edge_index, labels, and masks.
     """
     import logging
-    import os
 
     from scipy.io import loadmat
 
     logger = logging.getLogger(__name__)
-    mat_path = os.path.join(data_root, "YelpChi.mat")
-    if not os.path.exists(mat_path):
+    resolved_root = resolve_data_root(data_root)
+    mat_path = resolved_root / "YelpChi.mat"
+    if not mat_path.exists():
         msg = f"YelpChi.mat not found at {mat_path}"
         raise FileNotFoundError(msg)
 
@@ -303,12 +370,14 @@ def load_real_yelpchi(
     )
 
     data = Data(x=x, edge_index=edge_index, y=y)
-    return _generate_masks(data, seed=seed)
+    return _generate_masks(data, seed=seed, ratios=ratios, stratified=stratified)
 
 
 def load_real_amazon(
-    data_root: str = "/data1/mq/codes/awesome-graph-anomaly-detection/PriorF-GNN/datasets",
+    data_root: str | Path | None = None,
     seed: int = 1,
+    ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
+    stratified: bool = False,
 ) -> Data:
     """Load real Amazon dataset from .mat file.
 
@@ -320,13 +389,13 @@ def load_real_amazon(
         PyG Data object with features, edge_index, labels, and masks.
     """
     import logging
-    import os
 
     from scipy.io import loadmat
 
     logger = logging.getLogger(__name__)
-    mat_path = os.path.join(data_root, "Amazon.mat")
-    if not os.path.exists(mat_path):
+    resolved_root = resolve_data_root(data_root)
+    mat_path = resolved_root / "Amazon.mat"
+    if not mat_path.exists():
         msg = f"Amazon.mat not found at {mat_path}"
         raise FileNotFoundError(msg)
 
@@ -359,7 +428,7 @@ def load_real_amazon(
     )
 
     data = Data(x=x, edge_index=edge_index, y=y)
-    return _generate_masks(data, seed=seed)
+    return _generate_masks(data, seed=seed, ratios=ratios, stratified=stratified)
 
 
 def _ensure_dgl_importable() -> None:
@@ -391,8 +460,10 @@ def _ensure_dgl_importable() -> None:
 
 
 def load_real_tfinance(
-    data_root: str = "/data1/mq/codes/awesome-graph-anomaly-detection/PriorF-GNN/datasets",
+    data_root: str | Path | None = None,
     seed: int = 1,
+    ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
+    stratified: bool = False,
 ) -> Data:
     """Load real tfinance dataset from DGL binary format.
 
@@ -404,11 +475,10 @@ def load_real_tfinance(
         PyG Data object with features, edge_index, labels, and masks.
     """
     import logging
-    import os
-
     logger = logging.getLogger(__name__)
-    dgl_path = os.path.join(data_root, "tfinance")
-    if not os.path.exists(dgl_path):
+    resolved_root = resolve_data_root(data_root)
+    dgl_path = resolved_root / "tfinance"
+    if not dgl_path.exists():
         msg = f"tfinance not found at {dgl_path}"
         raise FileNotFoundError(msg)
 
@@ -421,7 +491,7 @@ def load_real_tfinance(
         msg = "dgl not installed. Run: pip install dgl"
         raise ImportError(msg) from exc
 
-    graphs, _label_dict = load_graphs(dgl_path)
+    graphs, _label_dict = load_graphs(str(dgl_path))
     g = graphs[0]
 
     # Extract features
@@ -459,12 +529,14 @@ def load_real_tfinance(
     )
 
     data = Data(x=x, edge_index=edge_index, y=y)
-    return _generate_masks(data, seed=seed)
+    return _generate_masks(data, seed=seed, ratios=ratios, stratified=stratified)
 
 
 def load_real_tsocial(
-    data_root: str = "/data1/mq/codes/awesome-graph-anomaly-detection/PriorF-GNN/datasets",
+    data_root: str | Path | None = None,
     seed: int = 1,
+    ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
+    stratified: bool = False,
 ) -> Data:
     """Load real tsocial dataset from DGL binary format.
 
@@ -476,11 +548,10 @@ def load_real_tsocial(
         PyG Data object with features, edge_index, labels, and masks.
     """
     import logging
-    import os
-
     logger = logging.getLogger(__name__)
-    dgl_path = os.path.join(data_root, "tsocial")
-    if not os.path.exists(dgl_path):
+    resolved_root = resolve_data_root(data_root)
+    dgl_path = resolved_root / "tsocial"
+    if not dgl_path.exists():
         msg = f"tsocial not found at {dgl_path}"
         raise FileNotFoundError(msg)
 
@@ -493,7 +564,7 @@ def load_real_tsocial(
         msg = "dgl not installed. Run: pip install dgl"
         raise ImportError(msg) from exc
 
-    graphs, _label_dict = load_graphs(dgl_path)
+    graphs, _label_dict = load_graphs(str(dgl_path))
     g = graphs[0]
 
     # Extract features
@@ -531,4 +602,4 @@ def load_real_tsocial(
     )
 
     data = Data(x=x, edge_index=edge_index, y=y)
-    return _generate_masks(data, seed=seed)
+    return _generate_masks(data, seed=seed, ratios=ratios, stratified=stratified)

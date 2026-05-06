@@ -24,9 +24,16 @@ Runs static analysis, unit tests, and the full 3-stage pipeline on a tiny synthe
 # GCN on tiny graph (always available)
 bash scripts/run_main_table.sh configs/experiments/main_gcn_tiny.yaml tiny gcn 1
 
-# GCN on YelpChi (requires PyG FraudDataset)
-bash scripts/run_main_table.sh configs/experiments/main_gcn_tiny.yaml yelpchi gcn 1
+# GCN on YelpChi using replayed teacher cache
+bash scripts/run_main_table.sh configs/experiments/full_gcn_yelpchi.yaml yelpchi gcn 1
+
+# Populate teacher cache with a live API call first, then rerun with replay
+LLM_BACKEND=openai bash scripts/run_main_table.sh configs/experiments/full_gcn_yelpchi.yaml yelpchi gcn 1
 ```
+
+Real datasets resolve in this order: `--data-root`, `data.root` in config,
+`GREAD_DATA_ROOT`, then the project-local `data/raw` symlink. The default
+setup uses `data/raw -> /data1/mq/codes/awesome-graph-anomaly-detection/PriorF-GNN/datasets`.
 
 ### Ablation Studies
 
@@ -58,11 +65,16 @@ Inference is fully LLM-free: the reasoner outputs `fraud_score`, `risk_type`, `s
 ## CLI Entry Points
 
 ```bash
-python -m gread_core.cli.train_detector --config <config> --dataset <dataset> --detector gcn
-python -m gread_core.cli.generate_err --config <config> --checkpoint <ckpt> --llm-backend stub
-python -m gread_core.cli.train_reasoner --config <config> --detector-checkpoint <ckpt> --err-dir <errs>
-python -m gread_core.cli.evaluate --checkpoint <ckpt> --config <config>
+python -m gread_core.cli.train_detector --config <config> --dataset <dataset> --detector gcn --data-root data/raw
+python -m gread_core.cli.generate_err --config <config> --dataset <dataset> --checkpoint <ckpt> --llm-backend replay
+python -m gread_core.cli.train_reasoner --config <config> --dataset <dataset> --detector-checkpoint <ckpt> --err-dir <errs>
+python -m gread_core.cli.evaluate --checkpoint <ckpt> --config <config> --dataset <dataset> --detector gcn --detector-checkpoint <ckpt> --err-dir <errs>
 ```
+
+`--llm-backend stub` is reserved for `tiny`/smoke runs. For non-tiny datasets,
+Stage 2 must use `replay` or `openai`, and evaluation requires real dataset,
+detector checkpoint, and ERR directory arguments unless `--synthetic` is passed
+explicitly for legacy testing.
 
 ## Key Constraints
 

@@ -12,6 +12,11 @@ from pathlib import Path
 import torch
 import yaml
 
+from gread_core.detectors.factory import (
+    ALL_DETECTOR_TYPES,
+    create_detector,
+    get_detector_embedding_dim,
+)
 from gread_core.experiment.seed import set_seed
 
 
@@ -28,7 +33,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--detector", type=str, default="gcn",
-        choices=["gcn", "gat", "bwgnn", "caregnn", "tree_neighbor"],
+        choices=ALL_DETECTOR_TYPES,
         help="Detector type",
     )
     parser.add_argument(
@@ -46,6 +51,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--device", type=str, default="cpu", help="Device")
+    parser.add_argument(
+        "--data-root", type=str, default=None,
+        help="Real dataset root; overrides config data.root and GREAD_DATA_ROOT",
+    )
     parser.add_argument(
         "--allow-empty-err", action="store_true",
         help="Allow training with 0 accepted ERRs (testing only)",
@@ -96,38 +105,20 @@ def main(argv: list[str] | None = None) -> None:
 
     # Load dataset
     from gread_core.data.loaders import load_graph_dataset
-    data = load_graph_dataset(args.dataset, seed=args.seed)
+    data = load_graph_dataset(
+        args.dataset, root=args.data_root, seed=args.seed, config=config
+    )
 
     # Create and load detector
     in_channels = data.x.shape[1]
     hidden_channels = config.get("detector", {}).get("hidden_channels", 64)
 
-    detector: torch.nn.Module
-    if args.detector == "gcn":
-        from gread_core.detectors.pyg_gnn import GCNDetector
-        detector = GCNDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
-    elif args.detector == "gat":
-        from gread_core.detectors.pyg_gnn import GATDetector
-        detector = GATDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
-    elif args.detector == "bwgnn":
-        from gread_core.detectors.bwgnn import BWGNNDetector
-        detector = BWGNNDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
-    elif args.detector == "caregnn":
-        from gread_core.detectors.caregnn import CAREGNNDetector
-        detector = CAREGNNDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
-    else:
-        from gread_core.detectors.tree_neighbor import TreeNeighborDetector
-        detector = TreeNeighborDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
+    detector = create_detector(
+        args.detector,
+        in_channels=in_channels,
+        hidden_channels=hidden_channels,
+        config=config,
+    )
 
     # Load detector checkpoint
     ckpt_path = Path(args.detector_checkpoint) / "model.pt"
@@ -179,7 +170,11 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     reasoner = GReaDReasoner(
-        hidden_dim=hidden_channels,
+        hidden_dim=get_detector_embedding_dim(
+            args.detector,
+            hidden_channels=hidden_channels,
+            config=config,
+        ),
         evidence_encoder=evidence_encoder,
         num_risk_types=num_risk_types,
         num_evidence_slots=num_evidence_slots,

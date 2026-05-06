@@ -16,6 +16,18 @@ cd "$PROJECT_DIR"
 DATASET="${1:-tiny}"
 DETECTOR="${2:-gcn}"
 SEED="${3:-1}"
+DATA_ROOT="${GREAD_DATA_ROOT:-data/raw}"
+if [ -z "${LLM_BACKEND:-}" ]; then
+    if [ "$DATASET" = "tiny" ]; then
+        LLM_BACKEND="stub"
+    else
+        LLM_BACKEND="replay"
+    fi
+fi
+if [ "$DATASET" != "tiny" ] && [ "$LLM_BACKEND" = "stub" ]; then
+    echo "ERROR: LLM_BACKEND=stub is only allowed for tiny/smoke runs, not ${DATASET}."
+    exit 1
+fi
 
 # ── Discover ablation configs ───────────────────────────────────────
 CONFIGS=(configs/experiments/ablation_*.yaml)
@@ -55,7 +67,8 @@ for i in "${!CONFIGS[@]}"; do
         --detector "$DETECTOR" \
         --output-dir "$OUTPUT_DIR" \
         --experiment-id "$EXPERIMENT_ID" \
-        --seed "$SEED"
+        --seed "$SEED" \
+        --data-root "$DATA_ROOT"
 
     # Find the latest stage1 checkpoint
     STAGE1_CKPT=$(ls -d "$OUTPUT_DIR"/stage1/epoch_* 2>/dev/null | sort | tail -1)
@@ -65,7 +78,7 @@ for i in "${!CONFIGS[@]}"; do
         continue
     fi
 
-    # ── Stage 2: Generate ERRs (stub mode) ──────────────────────────
+    # ── Stage 2: Generate ERRs ──────────────────────────────────────
     echo "  [2/4] Stage 2: Generate ERRs..."
     python -m gread_core.cli.generate_err \
         --config "$CONFIG" \
@@ -75,7 +88,8 @@ for i in "${!CONFIGS[@]}"; do
         --output-dir "$OUTPUT_DIR" \
         --experiment-id "$EXPERIMENT_ID" \
         --seed "$SEED" \
-        --llm-backend stub \
+        --data-root "$DATA_ROOT" \
+        --llm-backend "$LLM_BACKEND" \
         --cache-dir ".cache/llm_${EXPERIMENT_ID}"
 
     # ── Stage 3: Train reasoner ─────────────────────────────────────
@@ -88,7 +102,8 @@ for i in "${!CONFIGS[@]}"; do
         --err-dir "$OUTPUT_DIR/stage2" \
         --output-dir "$OUTPUT_DIR" \
         --experiment-id "$EXPERIMENT_ID" \
-        --seed "$SEED"
+        --seed "$SEED" \
+        --data-root "$DATA_ROOT"
 
     # Find the latest stage3 checkpoint
     STAGE3_CKPT=$(ls -d "$OUTPUT_DIR"/stage3/epoch_* 2>/dev/null | sort | tail -1)
@@ -106,8 +121,10 @@ for i in "${!CONFIGS[@]}"; do
         --dataset "$DATASET" \
         --detector "$DETECTOR" \
         --detector-checkpoint "$STAGE1_CKPT" \
+        --err-dir "$OUTPUT_DIR/stage2" \
         --output "$OUTPUT_DIR/metrics" \
-        --seed "$SEED"
+        --seed "$SEED" \
+        --data-root "$DATA_ROOT"
 
     PASSED=$((PASSED + 1))
     echo ""

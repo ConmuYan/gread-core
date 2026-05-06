@@ -11,6 +11,7 @@ import logging
 import torch
 import yaml
 
+from gread_core.detectors.factory import ALL_DETECTOR_TYPES, create_detector
 from gread_core.experiment.seed import set_seed
 
 
@@ -27,7 +28,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--detector", type=str, default="gcn",
-        choices=["gcn", "gat", "bwgnn", "caregnn", "tree_neighbor"],
+        choices=ALL_DETECTOR_TYPES,
         help="Detector type",
     )
     parser.add_argument(
@@ -38,6 +39,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--device", type=str, default="cpu", help="Device")
+    parser.add_argument(
+        "--data-root", type=str, default=None,
+        help="Real dataset root; overrides config data.root and GREAD_DATA_ROOT",
+    )
     parser.add_argument(
         "--tensorboard-dir", type=str, default=None,
         help="TensorBoard log dir (disabled if not set)",
@@ -71,38 +76,22 @@ def main(argv: list[str] | None = None) -> None:
 
     # Load dataset
     from gread_core.data.loaders import load_graph_dataset
-    data = load_graph_dataset(args.dataset, seed=args.seed)
+    from gread_core.training.stage1_reporting import apply_configured_split, save_stage1_artifacts
+    data = load_graph_dataset(
+        args.dataset, root=args.data_root, seed=args.seed, config=config
+    )
+    data = apply_configured_split(data, config, args.seed)
 
     # Create detector
     in_channels = data.x.shape[1]
     hidden_channels = config.get("detector", {}).get("hidden_channels", 64)
 
-    detector: torch.nn.Module
-    if args.detector == "gcn":
-        from gread_core.detectors.pyg_gnn import GCNDetector
-        detector = GCNDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
-    elif args.detector == "gat":
-        from gread_core.detectors.pyg_gnn import GATDetector
-        detector = GATDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
-    elif args.detector == "bwgnn":
-        from gread_core.detectors.bwgnn import BWGNNDetector
-        detector = BWGNNDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
-    elif args.detector == "caregnn":
-        from gread_core.detectors.caregnn import CAREGNNDetector
-        detector = CAREGNNDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
-    else:
-        from gread_core.detectors.tree_neighbor import TreeNeighborDetector
-        detector = TreeNeighborDetector(
-            in_channels=in_channels, hidden_channels=hidden_channels
-        )
+    detector = create_detector(
+        args.detector,
+        in_channels=in_channels,
+        hidden_channels=hidden_channels,
+        config=config,
+    )
 
     # Train
     from gread_core.training.checkpointing import CheckpointManager
@@ -126,14 +115,23 @@ def main(argv: list[str] | None = None) -> None:
         writer = SummaryWriter(log_dir=args.tensorboard_dir)  # type: ignore[no-untyped-call]
 
     train_detector(detector, data, config, ckpt_manager, writer=writer)
+    summary_path = save_stage1_artifacts(
+        args.output_dir,
+        detector,
+        data,
+        config,
+        dataset=args.dataset,
+        detector_name=args.detector,
+        seed=args.seed,
+    )
 
     if writer is not None:
         writer.close()  # type: ignore[no-untyped-call]
 
     manifest_path = registry.write_manifest()
     logging.getLogger(__name__).info(
-        "Stage 1 complete. Model saved to %s/stage1. Manifest: %s",
-        args.output_dir, manifest_path,
+        "Stage 1 complete. Model saved to %s/stage1. Summary: %s Manifest: %s",
+        args.output_dir, summary_path, manifest_path,
     )
 
 

@@ -1,0 +1,84 @@
+# Stage 1: CARE-GNN on YelpChi
+
+project:
+  name: gread-core-stage1-caregnn-yelpchi
+  seed: 42
+  output_dir: artifacts/stage1_rework_runs/yelpchi/caregnn
+
+data:
+  root: data/raw
+  split:
+    ratios: [0.7, 0.1, 0.2]
+    stratified: true
+
+detector:
+  type: caregnn
+  hidden_channels: 64
+  num_relations: 2
+  sim_threshold: 0.5
+  dropout: 0.5
+
+stage1:
+  epochs: 500
+  lr: 0.01
+  weight_decay: 0.0005
+  log_every: 10
+  save_every: 50
+  decision_threshold: 0.5
+  early_stopping:
+    enabled: true
+    monitor: auprc
+    patience: 50
+    min_delta: 0.0001
+    warmup_epochs: 50
+  tsne:
+    enabled: true
+    max_points: 2000
+    perplexity: 30.0
+    iterations: 350
+
+method:
+  score_blind: true
+  lambda_reason: 0.5
+  residual_rho: 0.1
+  signed_evidence_masks: true
+
+evidence:
+  num_slots: 16
+
+risk_taxonomy:
+  types:
+    - structural_discrepancy
+    - camouflage_neighbor
+    - spectral_anomaly
+    - feature_structure_conflict
+    - relation_or_burst_anomaly
+    - weak_or_uncertain_evidence
+
+trace_selection:
+  total_budget: 1000
+  buckets:
+    uncertain: 0.333
+    high_conf_fraud: 0.333
+    high_conf_benign: 0.334
+  diversity_sampling: true
+  conflict_bucket:
+    enabled: false
+
+verifier:
+  contract_path: configs/contracts/gread_v1.yaml
+  label_compatibility: true
+
+experimental:
+  dhef:
+    enabled: false
+  cer_regularizer:
+    enabled: false
+  evidence_conflict_bucket:
+    enabled: false
+  adaptive_lambda:
+    enabled: false
+  prototype_prompting:
+    enabled: false
+  llm_self_consistency:
+    enabled: false

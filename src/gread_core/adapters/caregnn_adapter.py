@@ -25,10 +25,9 @@ from gread_core.schemas.evidence import EvidenceStrength, MinimalEvidencePackage
 
 
 def _build_adj(edge_index: Tensor, n: int) -> Tensor:
-    """Build dense adjacency matrix from edge_index."""
-    adj = torch.zeros(n, n, dtype=torch.float32)
-    adj[edge_index[0], edge_index[1]] = 1.0
-    return adj
+    """Build sparse adjacency matrix from edge_index."""
+    values = torch.ones(edge_index.shape[1], dtype=torch.float32, device=edge_index.device)
+    return torch.sparse_coo_tensor(edge_index, values, (n, n))
 
 
 def _filter_disagreement(filter_weights: Tensor) -> float:
@@ -76,7 +75,10 @@ class CAREGNNAdapter(EvidenceAdapter):
         logits: Tensor,
         filter_weights: dict[int, Tensor] | None = None,
         thresholds: dict[str, float] | None = None,
+        detector_name: str | None = None,
     ) -> None:
+        if detector_name is not None:
+            self.detector_name = detector_name
         self._detector = detector
         self._graph = graph
         self._logits = logits
@@ -89,8 +91,8 @@ class CAREGNNAdapter(EvidenceAdapter):
         n = x.shape[0]
         adj = _build_adj(edge_index, n)
 
-        degrees = torch.zeros(n, dtype=torch.long)
-        ones = torch.ones(edge_index.shape[1], dtype=torch.long)
+        degrees = torch.zeros(n, dtype=torch.long, device=edge_index.device)
+        ones = torch.ones(edge_index.shape[1], dtype=torch.long, device=edge_index.device)
         degrees.scatter_add_(0, edge_index[0], ones)
 
         self._degree_levels = compute_degree_level(degrees)
@@ -123,24 +125,30 @@ class CAREGNNAdapter(EvidenceAdapter):
         counter_signal: str
 
         fw = self._filter_weights
-        if self.supports_detector_signal() and fw is not None and node_id in fw:
+        if fw is None:
+            detector_signal = "unavailable"
+            strength = "unavailable"
+            counter_signal = "no_filter_data"
+        elif node_id in fw:
             disagreement = _filter_disagreement(fw[node_id])
             detector_signal, strength = _derive_signal(disagreement, self._thresholds)
             counter_signal = _build_counter_signal(disagreement, self._thresholds)
         else:
-            detector_signal = "unavailable"
-            strength = "unavailable"
+            detector_signal = "neutral"
+            strength = "weak"
             counter_signal = "no_filter_data"
 
         if node_id < self._logits.shape[0]:
-            probs = torch.softmax(
-                self._logits[node_id].unsqueeze(0), dim=-1
-            )
-            pred_score = (
-                probs[0, -1].item()
-                if probs.shape[-1] > 1
-                else probs[0, 0].item()
-            )
+            logit_i = self._logits[node_id]
+            if logit_i.dim() == 0:
+                pred_score = torch.sigmoid(logit_i).item()
+            else:
+                probs = torch.softmax(logit_i.unsqueeze(0), dim=-1)
+                pred_score = (
+                    probs[0, -1].item()
+                    if probs.shape[-1] > 1
+                    else probs[0, 0].item()
+                )
             raw = self._raw_uncertainty
             uncertainty = raw[node_id] if node_id < len(raw) else 0.0
         else:

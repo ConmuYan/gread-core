@@ -7,6 +7,7 @@ cd "$PROJECT_DIR"
 CONFIG="configs/experiments/smoke_tiny.yaml"
 OUTPUT_DIR="artifacts/smoke"
 SEED=1
+DATA_ROOT="${GREAD_DATA_ROOT:-data/raw}"
 
 echo "=== GReaD-Core Smoke Test ==="
 echo ""
@@ -41,7 +42,8 @@ python -m gread_core.cli.train_detector \
     --output-dir "$OUTPUT_DIR" \
     --experiment-id smoke \
     --seed "$SEED" \
-    --device cpu
+    --device cpu \
+    --data-root "$DATA_ROOT"
 
 # Find the latest stage1 checkpoint
 STAGE1_CKPT=$(ls -d "$OUTPUT_DIR"/stage1/epoch_* 2>/dev/null | sort | tail -1)
@@ -62,6 +64,7 @@ python -m gread_core.cli.generate_err \
     --experiment-id smoke \
     --seed "$SEED" \
     --device cpu \
+    --data-root "$DATA_ROOT" \
     --llm-backend stub \
     --cache-dir .cache/llm_smoke
 
@@ -75,7 +78,8 @@ python -m gread_core.cli.train_reasoner \
     --output-dir "$OUTPUT_DIR" \
     --experiment-id smoke \
     --seed "$SEED" \
-    --device cpu
+    --device cpu \
+    --data-root "$DATA_ROOT"
 
 # Find the latest stage3 checkpoint
 STAGE3_CKPT=$(ls -d "$OUTPUT_DIR"/stage3/epoch_* 2>/dev/null | sort | tail -1)
@@ -90,9 +94,14 @@ echo "=== Evaluation ==="
 python -m gread_core.cli.evaluate \
     --checkpoint "$STAGE3_CKPT" \
     --config "$CONFIG" \
+    --dataset tiny \
+    --detector gcn \
+    --detector-checkpoint "$STAGE1_CKPT" \
+    --err-dir "$OUTPUT_DIR/stage2" \
     --output "$OUTPUT_DIR/metrics" \
     --seed "$SEED" \
-    --device cpu
+    --device cpu \
+    --data-root "$DATA_ROOT"
 
 echo ""
 echo "=== All smoke checks passed ==="

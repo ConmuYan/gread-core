@@ -57,6 +57,7 @@ def build_mep(
             "neighbor_consistency",
             "feature_neighbor_discrepancy",
             "detector_signal",
+            "uncertainty_level",
         ]
     if allowed_counter_ids is None:
         allowed_counter_ids = ["counter_signal", "uncertainty_level"]
