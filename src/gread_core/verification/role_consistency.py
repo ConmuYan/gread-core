@@ -10,11 +10,23 @@ def check_role_consistency(
     mep: MinimalEvidencePackage,
     config: dict[str, Any],
 ) -> tuple[bool, str]:
+    role_rules = config.get("role_rules", {})
+    uncertainty_support_allowed = set(
+        role_rules.get(
+            "uncertainty_support_allowed_risk_types",
+            ["weak_or_uncertain_evidence"],
+        )
+    )
     for eid in err.supporting_evidence:
         if eid not in mep.reasoning.allowed_support_ids:
             return False, f"supporting_evidence '{eid}' not in allowed_support_ids"
         if eid in FORBIDDEN_SUPPORT_IDS:
             return False, f"Forbidden as supporting_evidence: {eid}"
+        if eid == "uncertainty_level" and err.risk_type not in uncertainty_support_allowed:
+            return False, (
+                "uncertainty_level can only support risk types: "
+                f"{sorted(uncertainty_support_allowed)}"
+            )
     for eid in err.counter_evidence:
         if eid not in mep.reasoning.allowed_counter_ids:
             return False, f"counter_evidence '{eid}' not in allowed_counter_ids"

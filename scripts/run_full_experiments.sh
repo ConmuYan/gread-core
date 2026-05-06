@@ -11,8 +11,20 @@ DATASETS=${1:-"yelpchi amazon tfinance tsocial"}
 DETECTORS=${2:-"gcn bwgnn"}
 SEED=1
 DEVICE="cuda"
+DATA_ROOT="${GREAD_DATA_ROOT:-data/raw}"
 
 for DATASET in $DATASETS; do
+    if [ -z "${LLM_BACKEND:-}" ]; then
+        if [ "$DATASET" = "tiny" ]; then
+            LLM_BACKEND="stub"
+        else
+            LLM_BACKEND="replay"
+        fi
+    fi
+    if [ "$DATASET" != "tiny" ] && [ "$LLM_BACKEND" = "stub" ]; then
+        echo "ERROR: LLM_BACKEND=stub is only allowed for tiny/smoke runs, not ${DATASET}."
+        exit 1
+    fi
     for DETECTOR in $DETECTORS; do
         EXP_ID="full_${DETECTOR}_${DATASET}"
         CONFIG="configs/experiments/full_${DETECTOR}_${DATASET}.yaml"
@@ -40,12 +52,13 @@ for DATASET in $DATASETS; do
             --experiment-id "$EXP_ID" \
             --seed "$SEED" \
             --device "$DEVICE" \
+            --data-root "$DATA_ROOT" \
             --tensorboard-dir "$TB_DIR"
 
         STAGE1_CKPT=$(ls -d "$OUTPUT_DIR"/stage1/epoch_* 2>/dev/null | sort | tail -1)
         echo "  -> Stage 1 checkpoint: $STAGE1_CKPT"
 
-        # Stage 2: Generate ERRs (stub mode, 100 trace budget)
+        # Stage 2: Generate ERRs (replay by default; set LLM_BACKEND=openai to populate cache)
         echo "[2/4] Stage 2: Generate ERRs (budget=100)..."
         python -m gread_core.cli.generate_err \
             --config "$CONFIG" \
@@ -56,7 +69,8 @@ for DATASET in $DATASETS; do
             --experiment-id "$EXP_ID" \
             --seed "$SEED" \
             --device "$DEVICE" \
-            --llm-backend stub \
+            --data-root "$DATA_ROOT" \
+            --llm-backend "$LLM_BACKEND" \
             --cache-dir ".cache/llm_${EXP_ID}"
 
         # Stage 3: Train reasoner (100 epochs)
@@ -71,6 +85,7 @@ for DATASET in $DATASETS; do
             --experiment-id "$EXP_ID" \
             --seed "$SEED" \
             --device "$DEVICE" \
+            --data-root "$DATA_ROOT" \
             --tensorboard-dir "$TB_DIR"
 
         STAGE3_CKPT=$(ls -d "$OUTPUT_DIR"/stage3/epoch_* 2>/dev/null | sort | tail -1)
@@ -81,9 +96,14 @@ for DATASET in $DATASETS; do
         python -m gread_core.cli.evaluate \
             --checkpoint "$STAGE3_CKPT" \
             --config "$CONFIG" \
+            --dataset "$DATASET" \
+            --detector "$DETECTOR" \
+            --detector-checkpoint "$STAGE1_CKPT" \
+            --err-dir "$OUTPUT_DIR/stage2" \
             --output "$OUTPUT_DIR/metrics" \
             --seed "$SEED" \
-            --device "$DEVICE"
+            --device "$DEVICE" \
+            --data-root "$DATA_ROOT"
 
         echo ""
         echo "=== ${DETECTOR} on ${DATASET}: COMPLETE ==="

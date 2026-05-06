@@ -18,11 +18,13 @@ from torch import Tensor, nn
 
 try:
     from torch_geometric.data import Data
-    from torch_geometric.nn import GATConv, GCNConv
+    from torch_geometric.nn import GATConv, GCNConv, GINConv, SAGEConv
 except ImportError:
     Data = Any
     GCNConv = None
     GATConv = None
+    SAGEConv = None
+    GINConv = None
 
 
 class GCNDetector(nn.Module):
@@ -128,6 +130,7 @@ class GATDetector(nn.Module):
         hidden_channels: int = 64,
         num_layers: int = 2,
         attention_heads: int = 4,
+        heads: int | None = None,
         dropout: float = 0.5,
     ) -> None:
         super().__init__()
@@ -135,6 +138,8 @@ class GATDetector(nn.Module):
             msg = "torch_geometric is required for GATDetector"
             raise ImportError(msg)
 
+        if heads is not None:
+            attention_heads = heads
         self.dropout = dropout
         self.convs = nn.ModuleList()
 
@@ -185,6 +190,121 @@ class GATDetector(nn.Module):
 
     def _get_target_mask(self, graph: Data) -> Tensor | None:
         """Select target nodes based on available masks."""
+        if hasattr(graph, "test_mask") and graph.test_mask is not None and graph.test_mask.any():
+            return graph.test_mask  # type: ignore[no-any-return]
+        if hasattr(graph, "val_mask") and graph.val_mask is not None and graph.val_mask.any():
+            return graph.val_mask  # type: ignore[no-any-return]
+        if hasattr(graph, "train_mask") and graph.train_mask is not None and graph.train_mask.any():
+            return graph.train_mask  # type: ignore[no-any-return]
+        return None
+
+
+class SAGEDetector(nn.Module):
+    detector_name: str = "sage"
+
+    def __init__(
+        self,
+        in_channels: int,
+        hidden_channels: int = 64,
+        num_layers: int = 2,
+        dropout: float = 0.5,
+        aggr: str = "mean",
+    ) -> None:
+        super().__init__()
+        if SAGEConv is None:
+            msg = "torch_geometric is required for SAGEDetector"
+            raise ImportError(msg)
+        if num_layers < 1:
+            msg = "num_layers must be >= 1"
+            raise ValueError(msg)
+
+        self.dropout = dropout
+        self.convs = nn.ModuleList()
+        self.convs.append(SAGEConv(in_channels, hidden_channels, aggr=aggr))
+        for _ in range(num_layers - 1):
+            self.convs.append(SAGEConv(hidden_channels, hidden_channels, aggr=aggr))
+        self.head = nn.Linear(hidden_channels, 1)
+
+    def forward_with_embedding(self, graph: Data) -> tuple[Tensor, Tensor]:
+        x: Tensor = graph.x
+        edge_index: Tensor = graph.edge_index
+        for conv in self.convs:
+            x = conv(x, edge_index)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        full_embedding = x
+        target_mask = self._get_target_mask(graph)
+        target_emb = full_embedding[target_mask] if target_mask is not None else full_embedding
+        logit = self.head(target_emb).squeeze(-1)
+        return logit, full_embedding
+
+    def _get_target_mask(self, graph: Data) -> Tensor | None:
+        if hasattr(graph, "test_mask") and graph.test_mask is not None and graph.test_mask.any():
+            return graph.test_mask  # type: ignore[no-any-return]
+        if hasattr(graph, "val_mask") and graph.val_mask is not None and graph.val_mask.any():
+            return graph.val_mask  # type: ignore[no-any-return]
+        if hasattr(graph, "train_mask") and graph.train_mask is not None and graph.train_mask.any():
+            return graph.train_mask  # type: ignore[no-any-return]
+        return None
+
+
+class GINDetector(nn.Module):
+    detector_name: str = "gin"
+
+    def __init__(
+        self,
+        in_channels: int,
+        hidden_channels: int = 64,
+        num_layers: int = 2,
+        dropout: float = 0.5,
+    ) -> None:
+        super().__init__()
+        if GINConv is None:
+            msg = "torch_geometric is required for GINDetector"
+            raise ImportError(msg)
+        if num_layers < 1:
+            msg = "num_layers must be >= 1"
+            raise ValueError(msg)
+
+        self.dropout = dropout
+        self.convs = nn.ModuleList()
+        self.projections = nn.ModuleList()
+        mlp = nn.Sequential(
+            nn.Linear(in_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Linear(hidden_channels, hidden_channels),
+        )
+        self.convs.append(GINConv(mlp))
+        self.projections.append(nn.Linear(in_channels, hidden_channels))
+        for _ in range(num_layers - 1):
+            hidden_mlp = nn.Sequential(
+                nn.Linear(hidden_channels, hidden_channels),
+                nn.ReLU(),
+                nn.Linear(hidden_channels, hidden_channels),
+            )
+            self.convs.append(GINConv(hidden_mlp))
+            self.projections.append(nn.Identity())
+        self.head = nn.Linear(hidden_channels, 1)
+        self.layer_deltas: list[Tensor] = []
+
+    def forward_with_embedding(self, graph: Data) -> tuple[Tensor, Tensor]:
+        x: Tensor = graph.x
+        edge_index: Tensor = graph.edge_index
+        deltas: list[Tensor] = []
+        for conv, projection in zip(self.convs, self.projections, strict=True):
+            before = projection(x)
+            after = conv(x, edge_index)
+            deltas.append((after - before).norm(dim=-1).detach())
+            x = F.relu(after)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        self.layer_deltas = deltas
+        full_embedding = x
+        target_mask = self._get_target_mask(graph)
+        target_emb = full_embedding[target_mask] if target_mask is not None else full_embedding
+        logit = self.head(target_emb).squeeze(-1)
+        return logit, full_embedding
+
+    def _get_target_mask(self, graph: Data) -> Tensor | None:
         if hasattr(graph, "test_mask") and graph.test_mask is not None and graph.test_mask.any():
             return graph.test_mask  # type: ignore[no-any-return]
         if hasattr(graph, "val_mask") and graph.val_mask is not None and graph.val_mask.any():

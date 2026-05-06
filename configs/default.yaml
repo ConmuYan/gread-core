@@ -3,6 +3,15 @@ project:
   seed: 1
   output_dir: artifacts
 
+data:
+  root: data/raw
+  split:
+    ratios: [0.7, 0.1, 0.2]
+    stratified: true
+
+stage2:
+  llm_batch_size: 16
+
 method:
   score_blind: true
   lambda_reason: 0.5

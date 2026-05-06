@@ -234,6 +234,56 @@ def test_uncertainty_alone_cannot_support_strong_fraud_risk(
     assert not result.accepted
 
 
+def test_uncertainty_cannot_support_strong_risk_with_other_evidence(
+    verifier: EvidenceContractVerifier,
+) -> None:
+    mep = _make_mep(allowed_support_ids=["detector_signal", "uncertainty_level"])
+    err = EvidenceRationaleRecord(
+        risk_type="spectral_anomaly",
+        supporting_evidence=["detector_signal", "uncertainty_level"],
+        counter_evidence=[],
+        summary="test",
+    )
+    result = verifier.verify(err, mep, label=None)
+    assert not result.accepted
+
+
+def test_uncertainty_can_support_weak_or_uncertain_evidence(
+    verifier: EvidenceContractVerifier,
+) -> None:
+    mep = _make_mep(
+        uncertainty_level="high",
+        allowed_support_ids=["uncertainty_level"],
+    )
+    err = EvidenceRationaleRecord(
+        risk_type="weak_or_uncertain_evidence",
+        supporting_evidence=["uncertainty_level"],
+        counter_evidence=[],
+        summary="test",
+    )
+    result = verifier.verify(err, mep, label=None)
+    assert result.accepted, f"Rejected: {result.reasons}"
+
+
+def test_weak_bwgnn_spectral_signal_does_not_satisfy_spectral_anomaly(
+    verifier: EvidenceContractVerifier,
+) -> None:
+    mep = _make_mep(
+        detector_name="bwgnn",
+        detector_signal="high_frequency_response_high",
+        detector_signal_strength="weak",
+        allowed_support_ids=["detector_signal", "detector_signal_strength"],
+    )
+    err = EvidenceRationaleRecord(
+        risk_type="spectral_anomaly",
+        supporting_evidence=["detector_signal"],
+        counter_evidence=[],
+        summary="test",
+    )
+    result = verifier.verify(err, mep, label=None)
+    assert not result.accepted
+
+
 def test_supporting_evidence_with_unavailable_value_rejected(
     verifier: EvidenceContractVerifier,
 ) -> None:

@@ -43,7 +43,7 @@ def compute_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     tpr = np.concatenate([[0.0], tpr])
     fpr = np.concatenate([[0.0], fpr])
 
-    auc_val = float(np.trapz(tpr, fpr))
+    auc_val = float(np.sum(np.diff(fpr) * (tpr[1:] + tpr[:-1]) * 0.5))
     return auc_val
 
 
@@ -103,6 +103,22 @@ def compute_f1(y_true: np.ndarray, y_pred: np.ndarray) -> float:
         return 0.0
 
     return float(2 * precision * recall / (precision + recall))
+
+
+def compute_f1_macro(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    positive_f1 = compute_f1(y_true, y_pred)
+    negative_f1 = compute_f1(1 - y_true, 1 - y_pred)
+    return float((positive_f1 + negative_f1) * 0.5)
+
+
+def compute_g_means(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    tp = float(np.sum((y_true == 1) & (y_pred == 1)))
+    tn = float(np.sum((y_true == 0) & (y_pred == 0)))
+    fp = float(np.sum((y_true == 0) & (y_pred == 1)))
+    fn = float(np.sum((y_true == 1) & (y_pred == 0)))
+    sensitivity = tp / (tp + fn) if tp + fn > 0 else 0.0
+    specificity = tn / (tn + fp) if tn + fp > 0 else 0.0
+    return float(np.sqrt(sensitivity * specificity))
 
 
 def compute_precision_at_k(y_true: np.ndarray, y_score: np.ndarray, k: int) -> float:
@@ -165,10 +181,17 @@ def compute_all_detection_metrics(
     if k_values is None:
         k_values = [10, 50, 100]
 
+    try:
+        auc = compute_auc(y_true, y_score)
+    except ValueError:
+        auc = 0.0
     metrics: dict[str, float] = {
-        "auc": compute_auc(y_true, y_score),
+        "auc": auc,
+        "auroc": auc,
         "auprc": compute_auprc(y_true, y_score),
         "f1": compute_f1(y_true, y_pred),
+        "f1_macro": compute_f1_macro(y_true, y_pred),
+        "g_means": compute_g_means(y_true, y_pred),
     }
 
     for k in k_values:

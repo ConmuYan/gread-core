@@ -6,10 +6,13 @@ Rules:
 1. Use only the evidence IDs listed in allowed_support_ids and allowed_counter_ids.
 2. Do not mention prediction score, fraud score, probability, or model confidence.
 3. counter_signal can only appear in counter_evidence.
-4. uncertainty_level alone cannot support a strong fraud risk type.
-5. Choose exactly one risk_type from the taxonomy below.
-6. supporting_evidence and counter_evidence must cite evidence slot IDs only.
-7. Output valid JSON only. No markdown fences, no commentary.
+4. uncertainty_level can support only weak_or_uncertain_evidence.
+5. Strong risk types need a cited non-uncertainty support ID.
+6. spectral_anomaly needs cited detector_signal with non-weak spectral support.
+7. Do not use labels or any calibration score.
+8. Choose exactly one risk_type from the taxonomy below.
+9. supporting_evidence and counter_evidence must cite evidence slot IDs only.
+10. Output valid JSON only. No markdown fences, no commentary.
 
 Risk taxonomy:
 - structural_discrepancy

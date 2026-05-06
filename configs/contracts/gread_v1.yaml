@@ -96,6 +96,8 @@ role_rules:
   forbidden_counter_ids:
     - prediction_score
   uncertainty_cannot_support_strong_risk_alone: true
+  uncertainty_support_allowed_risk_types:
+    - weak_or_uncertain_evidence
 
 label_compatibility:
   enabled: true

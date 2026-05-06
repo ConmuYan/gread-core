@@ -1,0 +1,80 @@
+project:
+  name: gread-core-stage2-yelpchi-bwgnn-qwen4b-sample
+  seed: 456
+  output_dir: artifacts/stage2_rework_runs/yelpchi/bwgnn/seed_456/qwen4b_sample
+
+data:
+  root: data/raw
+  split:
+    ratios: [0.7, 0.1, 0.2]
+    stratified: true
+
+detector:
+  hidden_channels: 64
+  dropout: 0.5
+  type: bwgnn
+
+stage2:
+  llm_backend: local
+  llm_model: Qwen3-4B-Instruct-2507
+  llm_model_path: /data1/mq/models/Qwen3-4B-Instruct-2507
+  llm_device: cuda:2
+  llm_batch_size: 1
+  llm_max_new_tokens: 384
+  temperature: 0.0
+  cache_dir: .cache/llm_stage2_yelpchi_bwgnn_qwen4b_sample
+  trace_split: train
+  release_detector_before_llm: true
+
+stage3:
+  epochs: 10
+  lr: 0.001
+  weight_decay: 0.00001
+  log_every: 1
+  save_every: 10
+
+method:
+  score_blind: true
+  lambda_reason: 0.5
+  residual_rho: 0.1
+  signed_evidence_masks: true
+
+evidence:
+  num_slots: 16
+
+risk_taxonomy:
+  types:
+    - structural_discrepancy
+    - camouflage_neighbor
+    - spectral_anomaly
+    - feature_structure_conflict
+    - relation_or_burst_anomaly
+    - weak_or_uncertain_evidence
+
+trace_selection:
+  total_budget: 30
+  buckets:
+    uncertain: 0.333
+    high_conf_fraud: 0.333
+    high_conf_benign: 0.334
+  diversity_sampling: true
+  conflict_bucket:
+    enabled: false
+
+verifier:
+  contract_path: configs/contracts/gread_v1.yaml
+  label_compatibility: true
+
+experimental:
+  dhef:
+    enabled: false
+  cer_regularizer:
+    enabled: false
+  evidence_conflict_bucket:
+    enabled: false
+  adaptive_lambda:
+    enabled: false
+  prototype_prompting:
+    enabled: false
+  llm_self_consistency:
+    enabled: false

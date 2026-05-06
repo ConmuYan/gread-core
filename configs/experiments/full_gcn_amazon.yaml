@@ -1,7 +1,7 @@
-# Small-scale validation: GCN on Amazon (10 epochs).
+# Full experiment: GCN on Amazon.
 
 project:
-  name: gread-core-val-gcn-amazon
+  name: gread-core-full-gcn-amazon
   seed: 1
   output_dir: artifacts/full_gcn_amazon
 
@@ -18,7 +18,7 @@ stage1:
 
 stage2:
   llm_backend: replay
-  cache_dir: .cache/llm_full_amazon
+  cache_dir: .cache/llm_full_gcn_amazon
   trace_budget: 100
 
 stage3:

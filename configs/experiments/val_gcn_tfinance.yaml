@@ -6,7 +6,7 @@ project:
   output_dir: artifacts/val_gcn_tfinance
 
 detector:
-  hidden_channels: 64
+  hidden_channels: 32
   type: gcn
 
 stage1:
@@ -18,7 +18,7 @@ stage1:
 
 stage2:
   llm_backend: replay
-  cache_dir: .cache/llm_val_tfinance
+  cache_dir: .cache/llm_val_gcn_tfinance
   trace_budget: 20
 
 stage3:

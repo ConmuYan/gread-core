@@ -29,11 +29,14 @@ htmlcov/
 # Artifacts and generated outputs (large, not source)
 artifacts/
 .cache/
+data/
+logs/
 
 # OMC / agent state (session-specific)
 .omc/
 .agents/
 .claude/
+.sisyphus/
 
 # OS
 .DS_Store

@@ -11,6 +11,8 @@ from gread_core.evaluation.detection import (
     compute_auc,
     compute_auprc,
     compute_f1,
+    compute_f1_macro,
+    compute_g_means,
     compute_precision_at_k,
     compute_recall_at_k,
 )
@@ -67,6 +69,25 @@ class TestF1:
         assert compute_f1(y_true, y_pred) == pytest.approx(0.0)
 
 
+class TestF1Macro:
+    def test_perfect(self) -> None:
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 1, 1])
+        assert compute_f1_macro(y_true, y_pred) == pytest.approx(1.0)
+
+
+class TestGMeans:
+    def test_perfect(self) -> None:
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 1, 1])
+        assert compute_g_means(y_true, y_pred) == pytest.approx(1.0)
+
+    def test_zero_when_one_class_missed(self) -> None:
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 0, 0])
+        assert compute_g_means(y_true, y_pred) == pytest.approx(0.0)
+
+
 class TestPrecisionAtK:
     def test_top_k_all_positive(self) -> None:
         y_true = np.array([1, 1, 0, 0, 0])
@@ -119,8 +140,11 @@ class TestAllDetectionMetrics:
         y_pred = np.array([0, 0, 1, 1])
         metrics = compute_all_detection_metrics(y_true, y_score, y_pred)
         assert "auc" in metrics
+        assert "auroc" in metrics
         assert "auprc" in metrics
         assert "f1" in metrics
+        assert "f1_macro" in metrics
+        assert "g_means" in metrics
         assert "precision@10" in metrics
         assert "recall@10" in metrics
 

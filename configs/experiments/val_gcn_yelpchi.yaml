@@ -19,7 +19,7 @@ stage1:
 
 stage2:
   llm_backend: replay
-  cache_dir: .cache/llm_val_yelpchi
+  cache_dir: .cache/llm_val_gcn_yelpchi
   trace_budget: 20
 
 stage3:

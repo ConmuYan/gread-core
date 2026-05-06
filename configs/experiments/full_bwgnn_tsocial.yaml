@@ -1,7 +1,7 @@
-# Small-scale validation: BWGNN on T-Social (10 epochs).
+# Full experiment: BWGNN on T-Social.
 
 project:
-  name: gread-core-val-bwgnn-tsocial
+  name: gread-core-full-bwgnn-tsocial
   seed: 1
   output_dir: artifacts/full_bwgnn_tsocial
 

@@ -1,7 +1,7 @@
-# Small-scale validation: BWGNN on YelpChi (10 epochs).
+# Full experiment: BWGNN on YelpChi.
 
 project:
-  name: gread-core-val-bwgnn-yelpchi
+  name: gread-core-full-bwgnn-yelpchi
   seed: 1
   output_dir: artifacts/full_bwgnn_yelpchi
 

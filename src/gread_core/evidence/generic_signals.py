@@ -94,11 +94,10 @@ def compute_neighbor_consistency(
         neighbor_labels = labels[col]
         matches = (node_labels == neighbor_labels).float()
 
-        # Sum matches and degrees per node using scatter
-        from torch_scatter import scatter_add
-
-        match_sum = scatter_add(matches, row, dim=0, dim_size=n)
-        degree = scatter_add(torch.ones_like(matches), row, dim=0, dim_size=n)
+        match_sum = torch.zeros(n, dtype=matches.dtype, device=matches.device)
+        degree = torch.zeros(n, dtype=matches.dtype, device=matches.device)
+        match_sum.scatter_add_(0, row, matches)
+        degree.scatter_add_(0, row, torch.ones_like(matches))
 
         # Consistency = match_sum / degree (NaN where degree=0)
         consistency_values = torch.where(
@@ -163,15 +162,15 @@ def compute_feature_neighbor_discrepancy(
             cos_sims = cos_sims.clone()
             cos_sims[edge_nan] = float("nan")
 
-        from torch_scatter import scatter_add
-
         # Sum similarities and count valid edges per node
         valid_mask = ~torch.isnan(cos_sims)
         cos_sims_clean = torch.where(valid_mask, cos_sims, torch.zeros_like(cos_sims))
         valid_count = valid_mask.float()
 
-        sim_sum = scatter_add(cos_sims_clean, row, dim=0, dim_size=n)
-        edge_count = scatter_add(valid_count, row, dim=0, dim_size=n)
+        sim_sum = torch.zeros(n, dtype=cos_sims_clean.dtype, device=cos_sims_clean.device)
+        edge_count = torch.zeros(n, dtype=valid_count.dtype, device=valid_count.device)
+        sim_sum.scatter_add_(0, row, cos_sims_clean)
+        edge_count.scatter_add_(0, row, valid_count)
 
         # Mean similarity -> discrepancy
         mean_sim = torch.where(

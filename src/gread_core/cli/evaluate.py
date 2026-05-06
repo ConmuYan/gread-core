@@ -18,6 +18,11 @@ import numpy as np
 import torch
 import yaml
 
+from gread_core.detectors.factory import (
+    ALL_DETECTOR_TYPES,
+    create_detector,
+    get_detector_embedding_dim,
+)
 from gread_core.evaluation.ablation import run_ablation
 from gread_core.evaluation.cec import compute_tri_cec
 from gread_core.evaluation.detection import compute_all_detection_metrics
@@ -50,7 +55,11 @@ def _load_model(
     )
 
     reasoner = GReaDReasoner(
-        hidden_dim=hidden_channels,
+        hidden_dim=get_detector_embedding_dim(
+            str(config.get("detector", {}).get("type", "gcn")),
+            hidden_channels=hidden_channels,
+            config=config,
+        ),
         evidence_encoder=evidence_encoder,
         num_risk_types=6,
         num_evidence_slots=num_evidence_slots,
@@ -70,28 +79,19 @@ def _load_model(
 
 
 def _load_detector(
+    config: dict[str, Any],
     detector_type: str,
     checkpoint_path: Path,
     in_channels: int,
     hidden_channels: int,
 ) -> torch.nn.Module:
     """Load a base detector from checkpoint."""
-    detector: torch.nn.Module
-    if detector_type == "gcn":
-        from gread_core.detectors.pyg_gnn import GCNDetector
-        detector = GCNDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    elif detector_type == "gat":
-        from gread_core.detectors.pyg_gnn import GATDetector
-        detector = GATDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    elif detector_type == "bwgnn":
-        from gread_core.detectors.bwgnn import BWGNNDetector
-        detector = BWGNNDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    elif detector_type == "caregnn":
-        from gread_core.detectors.caregnn import CAREGNNDetector
-        detector = CAREGNNDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    else:
-        from gread_core.detectors.tree_neighbor import TreeNeighborDetector
-        detector = TreeNeighborDetector(in_channels=in_channels, hidden_channels=hidden_channels)
+    detector = create_detector(
+        detector_type,
+        in_channels=in_channels,
+        hidden_channels=hidden_channels,
+        config=config,
+    )
 
     model_path = checkpoint_path / "model.pt"
     if model_path.exists():
@@ -125,6 +125,32 @@ def _generate_synthetic_data(
     )
 
 
+def resolve_evaluation_mode(args: Any) -> str:
+    """Resolve evaluation mode and fail closed for formal runs."""
+    if args.synthetic:
+        return "synthetic"
+
+    missing = [
+        flag
+        for flag, value in (
+            ("--dataset", args.dataset),
+            ("--detector", args.detector),
+            ("--detector-checkpoint", args.detector_checkpoint),
+        )
+        if value is None
+    ]
+    if missing:
+        raise ValueError(
+            "Real evaluation requires --dataset, --detector, "
+            "--detector-checkpoint, and --err-dir. "
+            f"Missing: {', '.join(missing)}. "
+            "Pass --synthetic explicitly for legacy synthetic evaluation."
+        )
+    if args.err_dir is None:
+        raise ValueError("Real evaluation requires --err-dir for accepted ERR references.")
+    return "real"
+
+
 def _run_real_inference(
     config: dict[str, Any],
     dataset: str,
@@ -133,6 +159,7 @@ def _run_real_inference(
     reasoner: GReaDReasoner,
     device: torch.device,
     seed: int,
+    data_root: str | None,
     logger: logging.Logger,
 ) -> tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray,
@@ -143,12 +170,14 @@ def _run_real_inference(
     from gread_core.training.stage2_generate_err import _strip_masks
 
     # Load dataset
-    data = load_graph_dataset(dataset, seed=seed)
+    data = load_graph_dataset(dataset, root=data_root, seed=seed, config=config)
     in_channels = data.x.shape[1]
     hidden_channels = config.get("detector", {}).get("hidden_channels", 64)
 
     # Load detector
-    detector = _load_detector(detector_type, detector_checkpoint, in_channels, hidden_channels)
+    detector = _load_detector(
+        config, detector_type, detector_checkpoint, in_channels, hidden_channels
+    )
     detector.to(device)
     detector.eval()
 
@@ -161,11 +190,16 @@ def _run_real_inference(
         embeddings_cpu = embeddings.cpu()
 
     # Get predictions via reasoner
-    from gread_core.adapters.pyg_gnn_adapter import PyGGNNAdapter
+    from gread_core.adapters.factory import create_evidence_adapter
     adapter_thresholds = config.get("adapter", {}).get("thresholds", {})
-    adapter = PyGGNNAdapter(
-        detector, data, logits.cpu(), embeddings.cpu(),
+    adapter = create_evidence_adapter(
+        detector_type=detector_type,
+        detector=detector,
+        graph=data,
+        logits=logits.cpu(),
+        embeddings=embeddings.cpu(),
         thresholds=adapter_thresholds,
+        strict_detector_signal=dataset != "tiny",
     )
 
     # Build evidence for test nodes
@@ -252,6 +286,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--device", type=str, default="cpu", help="Device")
     parser.add_argument(
+        "--data-root", type=str, default=None,
+        help="Real dataset root; overrides config data.root and GREAD_DATA_ROOT",
+    )
+    parser.add_argument(
         "--experiment-id", type=str, default="eval", help="Experiment ID"
     )
     parser.add_argument(
@@ -260,7 +298,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--detector", type=str, default=None,
-        choices=["gcn", "gat", "bwgnn", "caregnn", "tree_neighbor"],
+        choices=ALL_DETECTOR_TYPES,
         help="Detector type (required for real evaluation)"
     )
     parser.add_argument(
@@ -294,8 +332,12 @@ def main(argv: list[str] | None = None) -> None:
 
     with open(args.config) as f:
         config = yaml.safe_load(f)
+    if args.detector is not None:
+        config.setdefault("detector", {})["type"] = args.detector
 
     set_seed(args.seed)
+    mode = resolve_evaluation_mode(args)
+    use_real = mode == "real"
 
     # Resolve contract_version from YAML if not already in config
     _cv = config.get("verifier", {}).get("contract_version")
@@ -329,15 +371,10 @@ def main(argv: list[str] | None = None) -> None:
     num_slots = config.get("evidence", {}).get("num_slots", 32)
     hidden_dim = config.get("detector", {}).get("hidden_channels", 64)
 
-    # Determine evaluation mode
-    use_real = (
-        args.dataset is not None
-        and args.detector is not None
-        and args.detector_checkpoint is not None
-        and not args.synthetic
-    )
-
     if use_real:
+        assert args.dataset is not None
+        assert args.detector is not None
+        assert args.detector_checkpoint is not None
         logger.info("Running REAL evaluation on dataset=%s detector=%s",
                      args.dataset, args.detector)
         reasoner = _load_model(checkpoint_path, config, device)
@@ -346,10 +383,11 @@ def main(argv: list[str] | None = None) -> None:
             z_v, base_logit, evidence_ids, evidence_features, test_nodes,
         ) = _run_real_inference(
             config, args.dataset, args.detector,
-            Path(args.detector_checkpoint), reasoner, device, args.seed, logger,
+            Path(args.detector_checkpoint), reasoner, device, args.seed,
+            args.data_root, logger,
         )
     else:
-        logger.info("Running SYNTHETIC evaluation (legacy mode)")
+        logger.info("Running SYNTHETIC evaluation (explicit legacy mode)")
         y_true, y_score, y_pred, types_encoded, z_v, base_logit, evidence_ids, evidence_features = (
             _generate_synthetic_data(200, num_slots, hidden_dim, args.seed)
         )
@@ -458,6 +496,9 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Non-redundancy: AUC improvements computed")
 
     all_metrics: dict[str, Any] = {
+        "evaluation_mode": mode,
+        "dataset": args.dataset or "synthetic",
+        "detector": args.detector or "synthetic",
         "detection": detection_metrics,
         "reasoning": reasoning_metrics,
         "non_redundancy": {
@@ -499,15 +540,22 @@ def main(argv: list[str] | None = None) -> None:
             )
 
             if use_real:
+                assert args.dataset is not None
+                assert args.detector is not None
+                assert args.detector_checkpoint is not None
                 # Use real MEPs from the dataset
-                from gread_core.adapters.pyg_gnn_adapter import PyGGNNAdapter
+                from gread_core.adapters.factory import create_evidence_adapter
                 from gread_core.data.loaders import load_graph_dataset
                 from gread_core.training.stage2_generate_err import _strip_masks
 
-                data = load_graph_dataset(args.dataset, seed=args.seed)
+                data = load_graph_dataset(
+                    args.dataset, root=args.data_root, seed=args.seed, config=config
+                )
                 in_ch = data.x.shape[1]
                 h_ch = config.get("detector", {}).get("hidden_channels", 64)
-                det = _load_detector(args.detector, Path(args.detector_checkpoint), in_ch, h_ch)
+                det = _load_detector(
+                    config, args.detector, Path(args.detector_checkpoint), in_ch, h_ch
+                )
                 det.to(device)
                 det.eval()
 
@@ -516,9 +564,14 @@ def main(argv: list[str] | None = None) -> None:
                     logits_emb, embeddings_emb = det.forward_with_embedding(no_mask)  # type: ignore[operator]
 
                 adapter_thresholds = config.get("adapter", {}).get("thresholds", {})
-                adapter = PyGGNNAdapter(
-                    det, data, logits_emb.cpu(), embeddings_emb.cpu(),
+                adapter = create_evidence_adapter(
+                    detector_type=args.detector,
+                    detector=det,
+                    graph=data,
+                    logits=logits_emb.cpu(),
+                    embeddings=embeddings_emb.cpu(),
                     thresholds=adapter_thresholds,
+                    strict_detector_signal=args.dataset != "tiny",
                 )
                 test_m = data.test_mask
                 if test_m is None:
@@ -536,6 +589,7 @@ def main(argv: list[str] | None = None) -> None:
                     reasoner, cec_meps, slot_to_id, num_slots,
                     z_v_dev[:len(cec_meps)], base_logit_dev[:len(cec_meps)],
                 )
+                all_metrics["tri_cec_node_ids"] = tn
             else:
                 # Synthetic dummy MEPs for testing
                 slot_to_id = {f"slot_{i}": i for i in range(num_slots)}

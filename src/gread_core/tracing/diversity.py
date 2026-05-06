@@ -7,6 +7,7 @@ coverage of different detector signals, degree levels, and patterns.
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 
 from gread_core.schemas.evidence import MinimalEvidencePackage
 
@@ -27,7 +28,7 @@ def _evidence_signature(mep: MinimalEvidencePackage) -> tuple[str, ...]:
 
 def diversity_sample(
     candidates: list[int],
-    meps: list[MinimalEvidencePackage],
+    meps: Sequence[MinimalEvidencePackage],
     budget: int,
     rng: random.Random,
 ) -> tuple[list[int], list[float]]:

@@ -1,7 +1,7 @@
-# Small-scale validation: GCN on T-Social (10 epochs).
+# Full experiment: GCN on T-Social.
 
 project:
-  name: gread-core-val-gcn-tsocial
+  name: gread-core-full-gcn-tsocial
   seed: 1
   output_dir: artifacts/full_gcn_tsocial
 
@@ -18,7 +18,7 @@ stage1:
 
 stage2:
   llm_backend: replay
-  cache_dir: .cache/llm_full_tsocial
+  cache_dir: .cache/llm_full_gcn_tsocial
   trace_budget: 100
 
 stage3:

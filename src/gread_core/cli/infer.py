@@ -21,6 +21,11 @@ from typing import Any
 import torch
 import yaml
 
+from gread_core.detectors.factory import (
+    ALL_DETECTOR_TYPES,
+    create_detector,
+    get_detector_embedding_dim,
+)
 from gread_core.experiment.seed import set_seed
 from gread_core.inference.predictor import GReaDInferencePipeline
 from gread_core.models.evidence_encoder import EvidenceEncoder
@@ -38,29 +43,16 @@ def _load_detector(
     detector_name: str,
     checkpoint_path: Path,
     device: torch.device,
+    in_channels: int,
 ) -> torch.nn.Module:
     """Instantiate and load a base detector from checkpoint."""
     hidden_channels = config.get("detector", {}).get("hidden_channels", 64)
-    in_channels = config.get("detector", {}).get("in_channels", 64)
-
-    detector: torch.nn.Module
-    if detector_name == "gcn":
-        from gread_core.detectors.pyg_gnn import GCNDetector
-        detector = GCNDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    elif detector_name == "gat":
-        from gread_core.detectors.pyg_gnn import GATDetector
-        detector = GATDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    elif detector_name == "bwgnn":
-        from gread_core.detectors.bwgnn import BWGNNDetector
-        detector = BWGNNDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    elif detector_name == "caregnn":
-        from gread_core.detectors.caregnn import CAREGNNDetector
-        detector = CAREGNNDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    elif detector_name == "tree_neighbor":
-        from gread_core.detectors.tree_neighbor import TreeNeighborDetector
-        detector = TreeNeighborDetector(in_channels=in_channels, hidden_channels=hidden_channels)
-    else:
-        raise ValueError(f"Unknown detector: {detector_name}")
+    detector = create_detector(
+        detector_name,
+        in_channels=in_channels,
+        hidden_channels=hidden_channels,
+        config=config,
+    )
 
     model_path = checkpoint_path / "model.pt"
     if model_path.exists():
@@ -92,7 +84,11 @@ def _load_reasoner(
     )
 
     reasoner = GReaDReasoner(
-        hidden_dim=hidden_channels,
+        hidden_dim=get_detector_embedding_dim(
+            str(config.get("detector", {}).get("type", "gcn")),
+            hidden_channels=hidden_channels,
+            config=config,
+        ),
         evidence_encoder=evidence_encoder,
         num_risk_types=6,
         num_evidence_slots=num_evidence_slots,
@@ -126,7 +122,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--detector", type=str, default="gcn",
-        choices=["gcn", "gat", "bwgnn", "caregnn", "tree_neighbor"],
+        choices=ALL_DETECTOR_TYPES,
         help="Detector architecture name",
     )
     parser.add_argument(
@@ -144,6 +140,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--device", type=str, default="cpu",
         help="Device to run on (cpu, cuda, cuda:0, ...)",
+    )
+    parser.add_argument(
+        "--data-root", type=str, default=None,
+        help="Real dataset root; overrides config data.root and GREAD_DATA_ROOT",
     )
     parser.add_argument(
         "--seed", type=int, default=1,
@@ -164,13 +164,16 @@ def main(argv: list[str] | None = None) -> None:
     set_seed(args.seed)
 
     config = _load_config(args.config)
+    config.setdefault("detector", {})["type"] = args.detector
     device = torch.device(args.device)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load dataset.
     from gread_core.data.loaders import load_graph_dataset
-    data = load_graph_dataset(args.dataset, seed=args.seed)
+    data = load_graph_dataset(
+        args.dataset, root=args.data_root, seed=args.seed, config=config
+    )
     data = data.to(device)
 
     # Build detector.
@@ -180,6 +183,7 @@ def main(argv: list[str] | None = None) -> None:
         detector_name=args.detector,
         checkpoint_path=Path(args.detector_checkpoint),
         device=device,
+        in_channels=data.x.shape[1],
     )
 
     # Build reasoner.
@@ -191,7 +195,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     # Build adapter using detector forward pass on full graph (no masks).
-    from gread_core.adapters.pyg_gnn_adapter import PyGGNNAdapter
+    from gread_core.adapters.factory import create_evidence_adapter
 
     inference_graph = copy.copy(data)
     for attr in ("train_mask", "val_mask", "test_mask"):
@@ -201,9 +205,14 @@ def main(argv: list[str] | None = None) -> None:
     with torch.no_grad():
         logits, embeddings = detector.forward_with_embedding(inference_graph)  # type: ignore[operator]
     adapter_thresholds = config.get("adapter", {}).get("thresholds", {})
-    adapter = PyGGNNAdapter(
-        detector, inference_graph, logits, embeddings,
+    adapter = create_evidence_adapter(
+        detector_type=args.detector,
+        detector=detector,
+        graph=inference_graph,
+        logits=logits,
+        embeddings=embeddings,
         thresholds=adapter_thresholds,
+        strict_detector_signal=args.dataset != "tiny",
     )
 
     # Build pipeline.

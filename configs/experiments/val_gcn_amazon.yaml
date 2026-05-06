@@ -18,7 +18,7 @@ stage1:
 
 stage2:
   llm_backend: replay
-  cache_dir: .cache/llm_val_amazon
+  cache_dir: .cache/llm_val_gcn_amazon
   trace_budget: 20
 
 stage3:

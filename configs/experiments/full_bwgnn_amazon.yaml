@@ -1,7 +1,7 @@
-# Small-scale validation: BWGNN on Amazon (10 epochs).
+# Full experiment: BWGNN on Amazon.
 
 project:
-  name: gread-core-val-bwgnn-amazon
+  name: gread-core-full-bwgnn-amazon
   seed: 1
   output_dir: artifacts/full_bwgnn_amazon
 

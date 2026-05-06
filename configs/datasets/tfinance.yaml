@@ -1,2 +1,3 @@
 dataset: tfinance
 seed: 1
+data_root: data/raw
